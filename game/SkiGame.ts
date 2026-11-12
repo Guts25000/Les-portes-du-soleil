@@ -9,8 +9,14 @@ import { DemSampler } from '@/lib/dem';
 import { LocalProjection, bboxOf, resample, smooth } from '@/lib/geo';
 import { DIFF_COLOR, LIFT_LABEL } from '@/lib/estimates';
 import { Track, SpatialHash, rng, fbm, valueNoise, type Pt } from './track';
-import { createSkier, emptyInput, respawnOnTrack, speedOf, step, type Env, type GameEvent, type Input, type Skier } from './physics';
-import { buildBuildingMesh, distToPolygonEdge, fetchBuildings, modelBuilding, pointInPolygon, type BuildingModel } from './buildings';
+import { G, createSkier, emptyInput, respawnOnTrack, speedOf, step, type Env, type GameEvent, type Input, type Skier } from './physics';
+import { buildBuildingMesh, distToPolygonEdge, fetchVillage, modelBuilding, pointInPolygon, roadWidth, type BuildingModel, type OsmRoad } from './buildings';
+import { Features, placeAlongTrack, placePark } from './features';
+import { Combo, type Quality } from './tricks';
+import { GhostPlayer, GhostRecorder, RewindBuffer, ghostKey } from './ghost';
+import { SkiAudio } from './audio';
+import { qualitySettings, type QualityLevel, type QualitySettings } from './quality';
+import { setupPostFX, setupSky, type PostFX } from './postfx';
 import { boardable, buildLiftPath, LiftRide, type LiftPath } from './lifts';
 import { bannerTexture, dangerSignTexture, liftSignTexture, makePoles, makeSign, pisteSignTexture } from './signage';
 import { Minimap, type MiniLine } from './minimap';
@@ -31,6 +37,13 @@ export interface Hud {
   currentPiste: { name: string; difficulty: Difficulty } | null;
   liftPrompt: string | null;
   riding: { name: string; kind: string; progress: number; remainingS: number } | null;
+  combo: { names: string[]; total: number; mult: number; window: number } | null;
+  lastTrick: { id: number; name: string; points: number; quality: Quality } | null;
+  charge: number;
+  switchStance: boolean;
+  grinding: boolean;
+  rewinds: number;
+  ghost: boolean;
 }
 
 export interface GameResult {
@@ -42,6 +55,9 @@ export interface GameResult {
   crashes: number;
   distanceM: number;
   approximate: boolean;
+  rewinds: number;
+  /** Trajectoire sérialisée (fantôme) de cette descente. */
+  ghost: string;
 }
 
 export interface GameOptions {
@@ -52,6 +68,9 @@ export interface GameOptions {
   onHud: (h: Hud) => void;
   onFinish: (r: GameResult) => void;
   onLoading: (msg: string) => void;
+  /** Emplacements réels des snowparks (OSM). */
+  parks?: LngLat[];
+  quality?: QualityLevel;
 }
 
 interface Grid {
@@ -111,6 +130,27 @@ export class SkiGame {
   private halfWidth = 15;
   approximate = false;
   buildingsStatus: 'ok' | 'indisponibles' = 'ok';
+  private q!: QualitySettings;
+  private post!: PostFX;
+  private features = new Features();
+  private roads: OsmRoad[] = [];
+  private combo = new Combo();
+  private lastTrick: Hud['lastTrick'] = null;
+  private trickId = 0;
+  private ghostRec = new GhostRecorder();
+  private ghostPlayer: GhostPlayer | null = null;
+  private ghostMesh: THREE.Group | null = null;
+  private rewindBuf = new RewindBuffer<{ skier: Skier; score: number }>(8, 0.1);
+  private rewindKey = false;
+  private rewinds = 0;
+  private audio = new SkiAudio();
+  private timeScale = 1;
+  private slowTimer = 0;
+  private shake = 0;
+  private prevJump = false;
+  private grind: { id: number; t: number; dir: 1 | -1; v: number } | null = null;
+  private sparkles: THREE.Points | null = null;
+  private sparkleCol: Float32Array | null = null;
 
   input: Input = emptyInput();
   private keyInput: Input = emptyInput();
@@ -150,6 +190,7 @@ export class SkiGame {
   // ================================================================== construction
   async init() {
     const o = this.o;
+    this.q = qualitySettings(o.quality ?? 'haute');
     o.onLoading('Préparation du tracé GPS…');
     const line = o.piste.line;
     const [w, s, e, n] = bboxOf(line);
@@ -165,7 +206,7 @@ export class SkiGame {
     const demNear = new DemSampler(spanM < 6000 ? 14 : 13);
     const demFar = new DemSampler(11);
     o.onLoading('Téléchargement du relief réel et des bâtiments OSM…');
-    const buildingsP = fetchBuildings(nearBox).catch(() => null);
+    const villageP = fetchVillage(nearBox).catch(() => null);
     const [okNear, okFar] = await Promise.all([demNear.preload(nearBox), demFar.preload(farBox)]);
     if (this.disposed) return;
 
@@ -177,7 +218,7 @@ export class SkiGame {
 
     o.onLoading('Reconstruction du terrain 3D…');
     this.approximate = !okNear;
-    this.near = this.buildGrid(nearBox, 560, 7, (p) => demNear.sample(p));
+    this.near = this.buildGrid(nearBox, this.q.nearCells, 6, (p) => demNear.sample(p));
     this.far = this.buildGrid(farBox, 220, 50, (p) => demFar.sample(p) ?? demNear.sample(p));
     if (!okNear) this.synthesizeTerrain(this.near);
     if (!okFar || !okNear) {
@@ -191,7 +232,7 @@ export class SkiGame {
     const nb = { minX: this.near.minX, minZ: this.near.minZ, maxX: this.near.minX + (this.near.nx - 1) * this.near.cx, maxZ: this.near.minZ + (this.near.nz - 1) * this.near.cz };
 
     this.env = {
-      height: (x, z) => gridHeight(this.near, x, z) ?? gridHeight(this.far, x, z) ?? 0,
+      height: (x, z) => (gridHeight(this.near, x, z) ?? gridHeight(this.far, x, z) ?? 0) + this.features.offset(x, z),
       track: this.track,
       halfWidth: this.halfWidth,
       collide: (x, z, above) => this.collide(x, z, above),
@@ -202,23 +243,41 @@ export class SkiGame {
     this.preparePistes(nb);
 
     o.onLoading('Construction des chalets et des remontées…');
-    const osmBuildings = await buildingsP;
+    const village = await villageP;
     if (this.disposed) return;
-    if (osmBuildings) {
-      for (const b of osmBuildings) {
+    if (village) {
+      for (const b of village.buildings) {
         const fp = b.ring.map((p) => this.proj.toLocal(p));
+        if (fp.some((p) => this.corridor.query(p.x, p.z, 0, this.tmp).length)) continue; // jamais sur une piste
         const m = modelBuilding(b.id, fp, b.tags, this.env.height);
         if (!m) continue;
         const id = this.buildingHash.insert(m.cx, m.cz, m.radius);
         this.buildings[id] = m;
+        this.flattenUnder(m);
       }
+      this.roads = village.roads;
     } else this.buildingsStatus = 'indisponibles';
+
+    // modules freestyle : le long de la piste + snowparks réels
+    const rand = rng(4242);
+    placeAlongTrack(this.features, this.track, this.env.height, this.halfWidth, o.piste.difficulty, rand);
+    for (const p of o.parks ?? []) {
+      const l = this.proj.toLocal(p);
+      if (l.x < nb.minX + 200 || l.x > nb.maxX - 200 || l.z < nb.minZ + 200 || l.z > nb.maxZ - 200) continue;
+      const park = placePark(this.features, l.x, l.z, this.env.height, rand);
+      this.parkStarts.push(park);
+      for (let d = -10; d < 330; d += 8) {
+        const id = this.corridor.insert(l.x + park.dx * d, l.z + park.dz * d, 14);
+        this.corridorPiste[id] = -1;
+      }
+    }
 
     this.setupRenderer();
     this.buildSky();
     this.buildTerrainMeshes();
     this.buildBuildings();
     this.buildLifts(nb);
+    this.buildFeatures();
     await new Promise((r) => setTimeout(r, 0));
     o.onLoading('Plantation de la forêt…');
     this.buildForest();
@@ -227,10 +286,43 @@ export class SkiGame {
     this.buildBots();
     this.buildParticles();
     this.buildMinimap(nb);
+    this.buildGhost();
+    this.buildSparkles();
     this.bindKeys();
     this.reset();
     this.last = performance.now();
     this.loop();
+  }
+
+  private parkStarts: { x: number; z: number; dx: number; dz: number }[] = [];
+
+  /** Aplanit le terrain sous un bâtiment (terrassement) avec un raccord progressif. */
+  private flattenUnder(m: BuildingModel) {
+    const g = this.near;
+    const R = 5;
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const p of m.footprint) {
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minZ = Math.min(minZ, p.z);
+      maxZ = Math.max(maxZ, p.z);
+    }
+    const i0 = Math.max(0, Math.floor((minX - R - g.minX) / g.cx)), i1 = Math.min(g.nx - 1, Math.ceil((maxX + R - g.minX) / g.cx));
+    const j0 = Math.max(0, Math.floor((minZ - R - g.minZ) / g.cz)), j1 = Math.min(g.nz - 1, Math.ceil((maxZ + R - g.minZ) / g.cz));
+    for (let j = j0; j <= j1; j++)
+      for (let i = i0; i <= i1; i++) {
+        const x = g.minX + i * g.cx, z = g.minZ + j * g.cz;
+        const k = j * g.nx + i;
+        if (pointInPolygon(x, z, m.footprint)) g.h[k] = m.base - 0.05;
+        else {
+          const d = distToPolygonEdge(x, z, m.footprint);
+          if (d < R) {
+            const t = Math.max(0, (d - 1) / (R - 1));
+            const w = t * t * (3 - 2 * t);
+            g.h[k] = (m.base - 0.05) * (1 - w) + g.h[k] * w;
+          }
+        }
+      }
   }
 
   private preparePistes(nb: { minX: number; minZ: number; maxX: number; maxZ: number }) {
@@ -291,19 +383,21 @@ export class SkiGame {
 
   // ================================================================== rendu : base
   private setupRenderer() {
-    const r = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', logarithmicDepthBuffer: true });
-    r.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+    const r = new THREE.WebGLRenderer({ antialias: !this.q.postfx, powerPreference: 'high-performance', logarithmicDepthBuffer: true });
+    r.setPixelRatio(this.q.pixelRatio);
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.toneMapping = THREE.ACESFilmicToneMapping;
-    r.toneMappingExposure = 1.08;
+    r.toneMappingExposure = 0.92;
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
     this.o.container.appendChild(r.domElement);
     r.domElement.style.display = 'block';
     this.renderer = r;
+    r.setSize(this.o.container.clientWidth, this.o.container.clientHeight);
+    this.post = setupPostFX(r, this.scene, this.camera, this.q);
     const resize = () => {
       const w = this.o.container.clientWidth, h = this.o.container.clientHeight;
-      r.setSize(w, h);
+      this.post.setSize(w, h);
       this.camera.aspect = w / Math.max(1, h);
       this.camera.updateProjectionMatrix();
     };
@@ -311,14 +405,16 @@ export class SkiGame {
     window.addEventListener('resize', resize);
     this.cleanup.push(() => window.removeEventListener('resize', resize));
 
-    this.scene.add(new THREE.HemisphereLight(0xd2e6f7, 0x5c6b7a, 0.95));
+    this.scene.add(new THREE.HemisphereLight(0xd2e6f7, 0x5c6b7a, 0.35));
+    this.sun.intensity = 2.5;
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.mapSize.set(this.q.shadowMap, this.q.shadowMap);
     const sc = this.sun.shadow.camera;
-    sc.left = -90;
-    sc.right = 90;
-    sc.top = 90;
-    sc.bottom = -90;
+    const R = this.q.shadowRange;
+    sc.left = -R;
+    sc.right = R;
+    sc.top = R;
+    sc.bottom = -R;
     sc.near = 1;
     sc.far = 700;
     this.sun.shadow.bias = -0.0005;
@@ -328,30 +424,7 @@ export class SkiGame {
   }
 
   private buildSky() {
-    const mat = new THREE.ShaderMaterial({
-      side: THREE.BackSide,
-      depthWrite: false,
-      fog: false,
-      uniforms: {
-        top: { value: new THREE.Color(0x2a66ad) },
-        mid: { value: new THREE.Color(0x8fbde3) },
-        bottom: { value: new THREE.Color(0xe3ecf4) },
-        sunDir: { value: SUN_DIR },
-      },
-      vertexShader: 'varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-      fragmentShader: `uniform vec3 top; uniform vec3 mid; uniform vec3 bottom; uniform vec3 sunDir; varying vec3 vP;
-        void main(){
-          float h = vP.y;
-          vec3 c = h > 0.0 ? mix(mid, top, pow(h, 0.55)) : bottom;
-          c = mix(bottom, c, smoothstep(-0.02, 0.14, h));
-          float sd = max(dot(normalize(vP), sunDir), 0.0);
-          c += vec3(1.0, 0.92, 0.75) * (pow(sd, 900.0) * 3.0 + pow(sd, 12.0) * 0.18);
-          gl_FragColor = vec4(c, 1.0);
-        }`,
-    });
-    this.skyMesh = new THREE.Mesh(new THREE.SphereGeometry(11000, 32, 16), mat);
-    this.skyMesh.renderOrder = -1;
-    this.scene.add(this.skyMesh);
+    this.skyMesh = setupSky(this.scene, this.renderer, SUN_DIR);
   }
 
   private snowNormalMap(): THREE.Texture {
@@ -457,7 +530,7 @@ export class SkiGame {
 
   private buildTerrainMeshes() {
     const maxTex = this.renderer.capabilities.maxTextureSize;
-    const S = Math.min(maxTex, window.innerWidth > 900 ? 4096 : 2048);
+    const S = Math.min(maxTex, this.q.terrainTex);
     const cv = document.createElement('canvas');
     cv.width = S;
     cv.height = S;
@@ -530,6 +603,21 @@ export class SkiGame {
       ctx.strokeStyle = 'rgba(160,165,175,0.35)';
       ctx.stroke();
     }
+    // routes déneigées du village (OSM) : congères puis enrobé
+    for (const pass of [0, 1])
+      for (const rd of this.roads) {
+        const pts = rd.line.map((p) => this.proj.toLocal(p));
+        const w = roadWidth(rd.kind);
+        drawLine(pts, pass ? w : w + 2.2, pass ? (rd.kind === 'service' ? 'rgba(150,152,158,0.9)' : 'rgba(92,97,106,0.95)') : 'rgba(255,255,255,0.9)');
+      }
+    // modules : ombre bleutée sur la neige autour des tremplins
+    for (const k of this.features.kickers) {
+      const [px, py] = toPx(k.x + k.dx * k.L, k.z + k.dz * k.L);
+      ctx.fillStyle = 'rgba(120,150,190,0.18)';
+      ctx.beginPath();
+      ctx.arc(px, py, Math.max(2, 4 * pxPerM), 0, Math.PI * 2);
+      ctx.fill();
+    }
     const tex = new THREE.CanvasTexture(cv);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
@@ -563,7 +651,7 @@ export class SkiGame {
     }
     geo.setAttribute('color', new THREE.BufferAttribute(lin, 3));
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0 }));
-    mesh.castShadow = true;
+    mesh.castShadow = this.q.buildingShadows;
     mesh.receiveShadow = true;
     this.scene.add(mesh);
   }
@@ -591,7 +679,7 @@ export class SkiGame {
     const g = this.near;
     const r = rng(1234);
     const W = (g.nx - 1) * g.cx, D = (g.nz - 1) * g.cz;
-    const target = Math.min(16000, Math.round(((W * D) / 1e6) * 1300));
+    const target = Math.min(22000, Math.round(((W * D) / 1e6) * this.q.treeDensity));
     const pos: { x: number; z: number; y: number; s: number }[] = [];
     const avoid = new SpatialHash(20);
     for (const t of this.liftPaths) for (const q of resample(t.towers, 8)) avoid.insert(q.x, q.z, 9);
@@ -645,7 +733,8 @@ export class SkiGame {
       this.trees.insert(p.x, p.z, 0.45 * p.s);
     });
     for (const im of meshes) {
-      im.castShadow = true;
+      im.castShadow = this.q.treeShadows;
+      im.receiveShadow = this.q.level === 'ultra';
       this.scene.add(im);
     }
   }
@@ -781,7 +870,9 @@ export class SkiGame {
 
       // gares aval / amont
       for (const [st, isBottom] of [[path.bottom, true], [path.top, false]] as const) {
+        const osmStation = this.buildingHash.query(st.x, st.z, 14, this.tmp).length > 0;
         const g = new THREE.Group();
+        g.visible = !osmStation;
         const big = !path.ground;
         const body = new THREE.Mesh(new THREE.BoxGeometry(big ? 9 : 3, big ? 4.5 : 2.6, big ? 7 : 3), stationMat);
         body.position.y = big ? 2.25 : 1.3;
@@ -968,25 +1059,34 @@ export class SkiGame {
       ShiftLeft: 'tuck', ShiftRight: 'tuck',
     };
     const down = (e: KeyboardEvent) => {
+      this.audio.start();
       const k = map[e.code];
       if (k) {
         this.keyInput[k] = true;
         e.preventDefault();
       }
+      if (e.repeat) return;
       if (e.code === 'KeyC') this.firstPerson = !this.firstPerson;
       if (e.code === 'KeyR') this.reset();
       if (e.code === 'KeyE') this.boardKey = true;
+      if (e.code === 'KeyT' || e.code === 'Backspace') {
+        this.rewindKey = true;
+        e.preventDefault();
+      }
       if (e.code === 'KeyM' && this.minimap) this.minimap.canvas.style.display = this.minimap.canvas.style.display === 'none' ? 'block' : 'none';
     };
     const up = (e: KeyboardEvent) => {
       const k = map[e.code];
       if (k) this.keyInput[k] = false;
     };
+    const pointer = () => this.audio.start();
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
+    this.o.container.addEventListener('pointerdown', pointer);
     this.cleanup.push(() => {
       window.removeEventListener('keydown', down);
       window.removeEventListener('keyup', up);
+      this.o.container.removeEventListener('pointerdown', pointer);
     });
   }
 
@@ -995,21 +1095,31 @@ export class SkiGame {
     this.firstPerson = !this.firstPerson;
   }
 
-  /** Demande d'embarquement (bouton tactile). */
   board() {
     this.boardKey = true;
   }
 
-  /** Passe en mode libre (exploration, remontées). */
+  rewind() {
+    this.rewindKey = true;
+  }
+
+  setMuted(m: boolean) {
+    this.audio.start();
+    this.audio.setMuted(m);
+  }
+
   startFree() {
+    this.bankCombo();
     this.phase = 'free';
     this.env.freeRoam = true;
-    this.flash('Mode libre : explorez et prenez les remontées (E)', 3);
+    if (this.ghostMesh) this.ghostMesh.visible = false;
+    this.flash('Mode libre : remontées (E), snowparks, toutes les pistes', 3);
   }
 
   reset() {
     this.skier = createSkier(this.track, this.env.height);
     this.ride = null;
+    this.grind = null;
     this.env.freeRoam = false;
     this.phase = 'countdown';
     this.countdown = 3.2;
@@ -1017,16 +1127,23 @@ export class SkiGame {
     this.score = 0;
     this.tricks = 0;
     this.crashes = 0;
+    this.rewinds = 0;
     this.maxSpeed = 0;
     this.message = null;
+    this.lastTrick = null;
     this.events.length = 0;
+    this.combo.reset();
+    this.ghostRec.reset();
+    this.rewindBuf.clear();
+    this.timeScale = 1;
+    this.slowTimer = 0;
     this.placeCamera(true);
   }
 
   unstuck() {
     if (this.ride) return;
+    this.grind = null;
     if (this.phase === 'free') {
-      // retour au point de piste le plus proche
       const ids = this.corridor.query(this.skier.x, this.skier.z, 200, this.tmp);
       let bx = this.skier.x, bz = this.skier.z, bd = Infinity;
       for (const id of ids) {
@@ -1053,7 +1170,7 @@ export class SkiGame {
     const dt = Math.min(0.05, (now - this.last) / 1000);
     this.last = now;
     this.update(dt);
-    this.renderer.render(this.scene, this.camera);
+    this.post.render();
   };
 
   private currentPiste(): Hud['currentPiste'] {
@@ -1067,11 +1184,75 @@ export class SkiGame {
         best = id;
       }
     }
-    const lp = this.pistes[this.corridorPiste[best]];
+    const idx = this.corridorPiste[best];
+    if (idx === -1) return { name: 'Snowpark', difficulty: 'freeride' };
+    const lp = this.pistes[idx];
     return lp ? { name: lp.piste.named ? lp.piste.name : 'Piste sans nom', difficulty: lp.piste.difficulty } : null;
   }
 
-  private update(dt: number) {
+  private bankCombo() {
+    if (!this.combo.active) return;
+    const pts = this.combo.total;
+    this.combo.reset();
+    this.score += pts;
+    this.flash(`Combo encaissé +${pts.toLocaleString('fr-FR')}`, 1.4);
+    this.audio.bank();
+  }
+
+  // ------------------------------------------------------------------ grind
+  private tryEnterRail(k: Skier) {
+    if (this.grind || k.crashTimer > 0) return;
+    const r = this.features.railNear(k.x, k.z);
+    if (!r) return;
+    const rail = this.features.rails[r.id];
+    if (r.d > (rail.kind === 'box' ? 0.7 : 0.5)) return;
+    const sp = Math.hypot(k.vx, k.vz);
+    if (sp < 3) return;
+    const along = (k.vx * r.ux + k.vz * r.uz) / sp;
+    if (Math.abs(along) < 0.82) return;
+    const fromAir = !k.grounded && k.vy <= 0.5 && Math.abs(k.y - r.y) < 0.7;
+    const autoPop = k.grounded && ((r.t < 0.15 && along > 0) || (r.t > 0.85 && along < 0)) && k.y < r.y + 0.3;
+    if (!fromAir && !autoPop) return;
+    this.grind = { id: r.id, t: Math.max(0, Math.min(1, r.t)), dir: along > 0 ? 1 : -1, v: sp * Math.abs(along) };
+    k.grounded = false;
+    k.spin = 0;
+    k.flip = 0;
+    k.grabTime = 0;
+    const name = (rail.kind === 'box' ? 'Boardslide' : '50-50') + (k.switchStance ? ' switch' : '');
+    this.combo.add(name, 80);
+    this.lastTrick = { id: ++this.trickId, name, points: 80, quality: 'Good' };
+    this.audio.clack();
+  }
+
+  private updateGrind(dt: number, inp: Input) {
+    const g = this.grind!;
+    const k = this.skier;
+    const rail = this.features.rails[g.id];
+    const len = Math.hypot(rail.bx - rail.ax, rail.bz - rail.az) || 1;
+    const ux = (rail.bx - rail.ax) / len, uz = (rail.bz - rail.az) / len;
+    const drop = (rail.ya - rail.yb) / len; // > 0 si le rail descend de A vers B
+    g.v = Math.max(0.8, g.v + (G * drop * g.dir - 0.7) * dt);
+    g.t += (g.dir * g.v * dt) / len;
+    this.combo.extend(28 * g.v * dt);
+    const t = Math.max(0, Math.min(1, g.t));
+    k.x = rail.ax + (rail.bx - rail.ax) * t;
+    k.z = rail.az + (rail.bz - rail.az) * t;
+    k.y = rail.ya + (rail.yb - rail.ya) * t;
+    k.vx = ux * g.dir * g.v;
+    k.vz = uz * g.dir * g.v;
+    k.vy = 0;
+    k.heading = Math.atan2(ux * g.dir, uz * g.dir) + (k.switchStance ? Math.PI : 0);
+    k.airTime = 0;
+    const popped = this.prevJump && !inp.jump;
+    if (popped || g.t < 0 || g.t > 1) {
+      k.vy = popped ? 4.8 : 1;
+      k.grounded = false;
+      this.grind = null;
+    }
+  }
+
+  // ------------------------------------------------------------------ boucle
+  private update(dtReal: number) {
     const inp: Input = {
       left: this.keyInput.left || this.input.left,
       right: this.keyInput.right || this.input.right,
@@ -1080,13 +1261,35 @@ export class SkiGame {
       jump: this.keyInput.jump || this.input.jump,
       tuck: this.keyInput.tuck || this.input.tuck,
     };
+    // ralenti après une grosse figure réussie
+    if (this.slowTimer > 0) {
+      this.slowTimer -= dtReal;
+      this.timeScale = THREE.MathUtils.lerp(this.timeScale, this.slowTimer > 0 ? 0.35 : 1, 0.2);
+    } else this.timeScale = THREE.MathUtils.lerp(this.timeScale, 1, 0.15);
+    const dt = dtReal * this.timeScale;
     const k = this.skier;
     const wantBoard = this.boardKey;
     this.boardKey = false;
     let liftPrompt: string | null = null;
 
+    // retour en arrière
+    if (this.rewindKey) {
+      this.rewindKey = false;
+      if (!this.ride && (this.phase === 'running' || this.phase === 'free')) {
+        const snap = this.rewindBuf.rewind(3);
+        if (snap) {
+          Object.assign(this.skier, snap.skier);
+          this.score = snap.score;
+          this.grind = null;
+          this.combo.reset();
+          this.rewinds++;
+          this.flash('⏪ Retour en arrière', 1);
+        }
+      }
+    }
+
     if (this.phase === 'countdown') {
-      this.countdown -= dt;
+      this.countdown -= dtReal;
       if (this.countdown <= 0) {
         this.phase = 'running';
         this.flash('GO !', 1);
@@ -1102,27 +1305,48 @@ export class SkiGame {
       k.heading = Math.atan2(p.hx, p.hz);
       if (done) {
         const ex = this.ride.exit(this.env.height);
-        Object.assign(k, { x: ex.x, z: ex.z, y: ex.y, heading: ex.heading, vx: Math.sin(ex.heading) * 2, vz: Math.cos(ex.heading) * 2, grounded: true, crashTimer: 0 });
+        Object.assign(k, { x: ex.x, z: ex.z, y: ex.y, heading: ex.heading, vx: Math.sin(ex.heading) * 2, vz: Math.cos(ex.heading) * 2, grounded: true, crashTimer: 0, switchStance: false });
         this.flash(`Arrivée ${this.ride.path.name} — bonne descente !`, 2.2);
         this.ride = null;
       }
     } else if (this.phase === 'running' || this.phase === 'free') {
-      const sub = Math.ceil(dt / (1 / 120));
-      const h = dt / sub;
-      for (let i = 0; i < sub; i++) step(k, inp, this.env, h, this.events);
-      if (this.phase === 'running') this.time += dt;
+      if (this.grind) this.updateGrind(dt, inp);
+      else {
+        const sub = Math.ceil(dt / (1 / 120));
+        const h = dt / sub;
+        for (let i = 0; i < sub; i++) {
+          step(k, inp, this.env, h, this.events);
+          this.tryEnterRail(k);
+          if (this.grind) break;
+        }
+      }
+      if (this.phase === 'running') {
+        this.time += dt;
+        this.ghostRec.push(dt, k.x, k.y, k.z, k.heading);
+      }
+      this.rewindBuf.push(dt, () => ({ skier: { ...k }, score: this.score }));
       const sp = speedOf(k);
       this.maxSpeed = Math.max(this.maxSpeed, sp);
       if (k.grounded && !k.offPiste && k.crashTimer <= 0) this.score += sp * dt * 0.5;
       for (const e of this.events) {
         if (e.type === 'trick') {
-          this.score += e.points;
+          this.combo.add(e.name, e.points);
           this.tricks++;
-          this.flash(`${e.name}  +${e.points}`);
+          const q = e.quality ?? 'Good';
+          this.lastTrick = { id: ++this.trickId, name: e.name, points: e.points, quality: q };
+          this.audio.trick(q);
+          if (q === 'Perfect' && e.points >= 900) this.slowTimer = 0.45;
+        } else if (e.type === 'land') {
+          this.audio.land(Math.min(1, Math.abs(k.groundVy) / 12));
+          this.shake = Math.max(this.shake, Math.min(0.5, Math.abs(k.groundVy) / 30));
         } else if (e.type === 'crash') {
+          const lost = this.combo.fail();
           this.score = Math.max(0, this.score - 250);
           this.crashes++;
-          this.flash(`💥 ${e.reason}`);
+          this.grind = null;
+          this.flash(lost ? `💥 ${e.reason} — combo perdu (${lost})` : `💥 ${e.reason}`, 1.8);
+          this.audio.crash();
+          this.shake = 0.8;
         } else if (e.type === 'respawn') {
           this.score = Math.max(0, this.score - 200);
           this.flash('Retour sur la piste');
@@ -1131,10 +1355,15 @@ export class SkiGame {
         }
       }
       this.events.length = 0;
+      const banked = this.combo.update(dt, k.grounded && !this.grind);
+      if (banked) {
+        this.score += banked;
+        this.flash(`Combo encaissé +${banked.toLocaleString('fr-FR')}`, 1.4);
+        this.audio.bank();
+      }
       if (k.offPiste && k.grounded && this.messageTimer <= 0) this.flash('Hors piste : neige profonde', 0.8);
       if (this.phase === 'running' && k.s >= this.track.total - 8) this.finish();
 
-      // remontées : en mode libre uniquement
       if (this.phase === 'free' && k.grounded && k.crashTimer <= 0) {
         const lift = boardable(this.liftPaths, k.x, k.z);
         if (lift) {
@@ -1142,6 +1371,7 @@ export class SkiGame {
           if (wantBoard) {
             if (sp > 8) this.flash('Ralentissez pour embarquer', 1);
             else {
+              this.bankCombo();
               this.ride = new LiftRide(lift);
               this.flash(`${LIFT_LABEL[lift.kind]} ${lift.name} — maintenez Espace pour accélérer`, 2.5);
             }
@@ -1149,45 +1379,57 @@ export class SkiGame {
         } else if (wantBoard) this.flash('Approchez-vous d’une gare de départ', 1.2);
       }
     }
+    this.prevJump = inp.jump;
 
     if (this.messageTimer > 0) {
-      this.messageTimer -= dt;
+      this.messageTimer -= dtReal;
       if (this.messageTimer <= 0) this.message = null;
     }
 
-    this.updateSkierMesh(dt);
+    this.updateSkierMesh(dtReal);
+    this.updateGhost();
     this.updateBots(dt);
     this.updateLifts();
     this.updateParticles(dt);
-    this.placeCamera(false, dt);
+    this.updateSparkles();
+    this.placeCamera(false, dtReal);
+    const kmh = this.ride ? 0 : speedOf(k) * 3.6;
+    this.post.setSpeed(kmh);
+    this.audio.update(kmh, this.grind ? 0.9 : k.edgeLoss, !k.grounded && !this.grind, !!this.ride);
 
-    this.hudTimer -= dt;
+    this.hudTimer -= dtReal;
     if (this.hudTimer <= 0) {
-      this.hudTimer = 0.08;
+      this.hudTimer = 0.07;
       this.minimap?.draw(k.x, k.z, k.heading, this.bots.map((b) => ({ x: b.x, z: b.z })), this.liftPaths.map((p) => ({ x: p.bottom.x, z: p.bottom.z, label: '🚡' })));
       this.o.onHud({
         phase: this.phase,
         countdown: Math.ceil(this.countdown),
         time: this.time,
-        speedKmh: this.ride ? 0 : speedOf(k) * 3.6,
+        speedKmh: kmh,
         dist: k.s,
         remaining: Math.max(0, this.track.total - k.s),
         score: Math.round(this.score),
         tricks: this.tricks,
-        airborne: !k.grounded,
+        airborne: !k.grounded && !this.grind,
         offPiste: k.offPiste,
         message: this.message,
         altitude: k.y,
         currentPiste: this.ride ? null : this.currentPiste(),
         liftPrompt,
-        riding: this.ride
-          ? { name: this.ride.path.name, kind: LIFT_LABEL[this.ride.path.kind], progress: this.ride.progress, remainingS: this.ride.remainingS(inp.jump ? 12 : 3) }
-          : null,
+        riding: this.ride ? { name: this.ride.path.name, kind: LIFT_LABEL[this.ride.path.kind], progress: this.ride.progress, remainingS: this.ride.remainingS(inp.jump ? 12 : 3) } : null,
+        combo: this.combo.active ? { names: this.combo.names.slice(-5), total: this.combo.total, mult: this.combo.multiplier, window: this.combo.window } : null,
+        lastTrick: this.lastTrick,
+        charge: k.grounded ? k.charge : 0,
+        switchStance: k.switchStance,
+        grinding: !!this.grind,
+        rewinds: this.rewinds,
+        ghost: !!this.ghostPlayer && this.phase === 'running',
       });
     }
   }
 
   private finish() {
+    this.bankCombo();
     this.phase = 'finished';
     const avg = this.track.total / Math.max(1, this.time);
     this.score += Math.round(avg * 60);
@@ -1202,7 +1444,156 @@ export class SkiGame {
       crashes: this.crashes,
       distanceM: this.track.total,
       approximate: this.approximate,
+      rewinds: this.rewinds,
+      ghost: this.ghostRec.serialize(),
     });
+  }
+
+  // ------------------------------------------------------------------ modules, fantôme, paillettes
+  private buildFeatures() {
+    const snow = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75 });
+    for (const k of this.features.kickers) {
+      const nu = 16, nv = 10;
+      const u0 = -0.4, u1 = k.L + 1.5, vMax = k.W / 2 + 1.7;
+      const pos: number[] = [], col: number[] = [], idx: number[] = [];
+      for (let j = 0; j <= nv; j++)
+        for (let i = 0; i <= nu; i++) {
+          const u = u0 + ((u1 - u0) * i) / nu, v = -vMax + (2 * vMax * j) / nv;
+          const x = k.x + u * k.dx - v * k.dz, z = k.z + u * k.dz + v * k.dx;
+          pos.push(x, this.env.height(x, z) + 0.05, z);
+          const lip = u > k.L - 0.5 && u <= k.L + 0.05 && Math.abs(v) < k.W / 2;
+          if (lip) col.push(0.15, 0.4, 1);
+          else col.push(0.98, 0.99, 1);
+        }
+      for (let j = 0; j < nv; j++)
+        for (let i = 0; i < nu; i++) {
+          const a = j * (nu + 1) + i, b = a + 1, c = a + nu + 1, d = c + 1;
+          idx.push(a, c, b, b, c, d);
+        }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      geo.setIndex(idx);
+      geo.computeVertexNormals();
+      // l'enroulement doit regarder vers le haut
+      const n = geo.getAttribute('normal');
+      if (n.getY(Math.floor(n.count / 2)) < 0) {
+        idx.reverse();
+        geo.setIndex(idx);
+        geo.computeVertexNormals();
+      }
+      const m = new THREE.Mesh(geo, snow);
+      m.receiveShadow = true;
+      m.castShadow = true;
+      this.scene.add(m);
+    }
+    const railMat = new THREE.MeshStandardMaterial({ color: 0xc0c7d0, metalness: 0.9, roughness: 0.25 });
+    const boxMat = new THREE.MeshStandardMaterial({ color: 0x7c3aed, roughness: 0.4 });
+    const postMat = new THREE.MeshStandardMaterial({ color: 0x1d2127, roughness: 0.6 });
+    for (const r of this.features.rails) {
+      const a = new THREE.Vector3(r.ax, r.ya, r.az), b = new THREE.Vector3(r.bx, r.yb, r.bz);
+      const len = a.distanceTo(b);
+      const geo = r.kind === 'rail' ? new THREE.CylinderGeometry(0.05, 0.05, len, 10) : new THREE.BoxGeometry(0.55, len, 0.12);
+      geo.rotateX(Math.PI / 2);
+      const m = new THREE.Mesh(geo, r.kind === 'rail' ? railMat : boxMat);
+      m.position.copy(a).add(b).multiplyScalar(0.5);
+      m.position.y -= r.kind === 'rail' ? 0.05 : 0.06;
+      m.lookAt(b.x, b.y - (r.kind === 'rail' ? 0.05 : 0.06), b.z);
+      m.castShadow = true;
+      this.scene.add(m);
+      for (let t = 0.1; t <= 0.9; t += 0.4) {
+        const x = r.ax + (r.bx - r.ax) * t, z = r.az + (r.bz - r.az) * t;
+        const top = r.ya + (r.yb - r.ya) * t - 0.08, ground = this.env.height(x, z);
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, Math.max(0.1, top - ground + 0.3), 6), postMat);
+        post.position.set(x, (top + ground - 0.3) / 2, z);
+        this.scene.add(post);
+      }
+    }
+    for (const p of this.parkStarts) {
+      const sign = makeSign(bannerTexture('SNOWPARK', '#7c3aed'), 3.2, 0.5, 2.2);
+      const sx = p.x - p.dz * 9, sz = p.z + p.dx * 9;
+      sign.position.set(sx, this.env.height(sx, sz), sz);
+      sign.rotation.y = Math.atan2(-p.dx, -p.dz);
+      this.scene.add(sign);
+    }
+  }
+
+  private buildGhost() {
+    try {
+      this.ghostPlayer = GhostPlayer.parse(localStorage.getItem(ghostKey(this.o.piste.id)));
+    } catch {
+      this.ghostPlayer = null;
+    }
+    if (!this.ghostPlayer) return;
+    const m = this.makeSkierModel(0x9fd3ff, 0x9fd3ff);
+    const mat = new THREE.MeshStandardMaterial({ color: 0xbfe3ff, emissive: 0x3d8bff, emissiveIntensity: 0.6, transparent: true, opacity: 0.38, depthWrite: false });
+    m.g.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.material = mat;
+        mesh.castShadow = false;
+      }
+    });
+    this.ghostMesh = m.g;
+    this.ghostMesh.visible = false;
+    this.scene.add(this.ghostMesh);
+  }
+
+  private updateGhost() {
+    if (!this.ghostMesh || !this.ghostPlayer) return;
+    const p = this.phase === 'running' ? this.ghostPlayer.sample(this.time) : null;
+    this.ghostMesh.visible = !!p;
+    if (p) {
+      this.ghostMesh.position.set(p.x, p.y, p.z);
+      this.ghostMesh.rotation.set(0, p.heading, 0);
+    }
+  }
+
+  private buildSparkles() {
+    const N = this.q.sparkles;
+    if (!N) return;
+    const pos = new Float32Array(N * 3);
+    this.sparkleCol = new Float32Array(N * 3);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(this.sparkleCol, 3));
+    this.sparkles = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.05, vertexColors: true, toneMapped: false, transparent: true, depthWrite: false }));
+    this.sparkles.frustumCulled = false;
+    this.scene.add(this.sparkles);
+    for (let i = 0; i < N; i++) pos[i * 3 + 1] = -99999;
+  }
+
+  /** Paillettes de neige au soleil autour de la caméra (scintillement aléatoire). */
+  private updateSparkles() {
+    if (!this.sparkles || !this.sparkleCol) return;
+    const p = this.sparkles.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const a = p.array as Float32Array;
+    const c = this.sparkleCol;
+    const cam = this.camera.position;
+    const R = 38;
+    for (let i = 0; i < a.length / 3; i++) {
+      const dx = a[i * 3] - cam.x, dz = a[i * 3 + 2] - cam.z;
+      if (dx * dx + dz * dz > R * R || a[i * 3 + 1] < -9999) {
+        const ang = Math.random() * Math.PI * 2, rr = 3 + Math.sqrt(Math.random()) * (R - 3);
+        const x = cam.x + Math.cos(ang) * rr, z = cam.z + Math.sin(ang) * rr;
+        a[i * 3] = x;
+        a[i * 3 + 1] = this.env.height(x, z) + 0.04;
+        a[i * 3 + 2] = z;
+        c[i * 3] = c[i * 3 + 1] = c[i * 3 + 2] = 0;
+      }
+      if (Math.random() < 0.02) {
+        const v = 2.5 + Math.random() * 6;
+        c[i * 3] = v;
+        c[i * 3 + 1] = v;
+        c[i * 3 + 2] = v * 1.05;
+      } else {
+        c[i * 3] *= 0.82;
+        c[i * 3 + 1] *= 0.82;
+        c[i * 3 + 2] *= 0.82;
+      }
+    }
+    p.needsUpdate = true;
+    (this.sparkles.geometry.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true;
   }
 
   private updateSkierMesh(dt: number) {
@@ -1212,27 +1603,34 @@ export class SkiGame {
     const e = 1.2;
     const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
     const riding = !!this.ride;
+    const air = !k.grounded && !riding && !this.grind;
     const hF = this.env.height(k.x + fx * e, k.z + fz * e) - this.env.height(k.x - fx * e, k.z - fz * e);
     const pitch = k.grounded && !riding ? Math.atan2(-hF, 2 * e) : 0;
     g.rotation.set(0, 0, 0);
-    g.rotateY(k.heading + (k.grounded || riding ? 0 : k.spin));
-    g.rotateX(pitch);
+    g.rotateY(k.heading + (air ? k.spin : 0));
+    if (air && k.flip !== 0) {
+      // rotation autour du centre du corps
+      g.translateY(0.9);
+      g.rotateX(k.flip);
+      g.translateY(-0.9);
+    } else g.rotateX(pitch);
     const speed = speedOf(k);
     const crash = k.crashTimer > 0;
     const seated = riding && !this.ride!.path.ground;
     const lerp = (a: number, b: number, t: number) => THREE.MathUtils.lerp(a, b, Math.min(1, dt * t));
-    this.skierParts.lean.rotation.z = lerp(this.skierParts.lean.rotation.z, crash ? 1.3 : riding ? 0 : -k.turn * Math.min(0.6, 0.12 + speed / 40), 8);
+    this.skierParts.lean.rotation.z = lerp(this.skierParts.lean.rotation.z, crash ? 1.3 : riding || this.grind ? 0 : -k.turn * Math.min(0.75, 0.15 + speed / 32), 9);
     const tuck = (this.keyInput.tuck || this.input.tuck) && !riding;
-    const brake = (this.keyInput.down || this.input.down) && !riding;
-    this.skierParts.body.scale.y = lerp(this.skierParts.body.scale.y, seated ? 0.7 : tuck && k.grounded ? 0.72 : brake ? 0.88 : 0.95, 6);
-    this.skierParts.body.rotation.x = lerp(this.skierParts.body.rotation.x, seated ? -0.35 : tuck ? 0.45 : 0.12, 6);
+    const brake = (this.keyInput.down || this.input.down) && !riding && k.grounded;
+    const grab = air && k.grabTime > 0;
+    const crouch = k.grounded ? 0.95 - k.charge * 0.28 : 0.95;
+    this.skierParts.body.scale.y = lerp(this.skierParts.body.scale.y, seated ? 0.7 : grab ? 0.62 : tuck && k.grounded ? 0.72 : brake ? 0.88 : this.grind ? 0.85 : crouch, 10);
+    this.skierParts.body.rotation.x = lerp(this.skierParts.body.rotation.x, seated ? -0.35 : grab ? 0.7 : tuck ? 0.45 : 0.12, 8);
     this.skierParts.skis.position.y = seated ? 0.35 : 0;
     this.skierParts.skis.children.forEach((s, i) => {
       s.rotation.y = THREE.MathUtils.lerp(s.rotation.y, brake ? (i % 2 ? -0.25 : 0.25) : 0, Math.min(1, dt * 8));
     });
     g.visible = !this.firstPerson;
 
-    // siège ou cabine
     const gondola = riding && (this.ride!.path.kind === 'telecabine' || this.ride!.path.kind === 'telepherique' || this.ride!.path.kind === 'telemix');
     this.seat.visible = seated && !gondola;
     this.cabin.visible = gondola;
@@ -1243,8 +1641,8 @@ export class SkiGame {
       this.cabin.rotation.set(0, k.heading, 0);
     }
 
-    if (k.grounded && !riding && speed > 5 && k.edgeLoss > 0.05) {
-      const n = Math.ceil(k.edgeLoss * 10);
+    if ((k.grounded && !riding && speed > 5 && k.edgeLoss > 0.05) || (this.grind && Math.random() < 0.6)) {
+      const n = this.grind ? 2 : Math.ceil(k.edgeLoss * 12);
       for (let i = 0; i < n; i++) this.emitSpray(k.x, k.y + 0.1, k.z, -k.vx * 0.2 + (Math.random() - 0.5) * 3, 1.5 + Math.random() * 2.5, -k.vz * 0.2 + (Math.random() - 0.5) * 3);
     }
     this.sun.position.set(k.x + SUN_DIR.x * 300, k.y + SUN_DIR.y * 300, k.z + SUN_DIR.z * 300);
@@ -1370,7 +1768,13 @@ export class SkiGame {
     const minY = this.env.height(this.camPos.x, this.camPos.z) + 1.2;
     if (this.camPos.y < minY) this.camPos.y = minY;
     this.camera.position.copy(this.camPos);
+    if (this.shake > 0.001) {
+      this.camera.position.x += (Math.random() - 0.5) * this.shake;
+      this.camera.position.y += (Math.random() - 0.5) * this.shake;
+      this.shake *= Math.exp(-dt * 7);
+    }
     this.camera.lookAt(this.camLook);
+    if (!this.firstPerson && !this.ride) this.camera.rotateZ(-k.turn * 0.05 * Math.min(1, speed / 18));
     const fov = 68 + Math.min(16, Math.max(0, speed * 3.6 - 40) * 0.25);
     if (Math.abs(this.camera.fov - fov) > 0.1) {
       this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, fov, 0.1);
@@ -1386,6 +1790,8 @@ export class SkiGame {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
     for (const c of this.cleanup) c();
+    this.audio.dispose();
+    this.post?.dispose();
     this.minimap?.canvas.remove();
     if (this.renderer) {
       this.scene.traverse((o) => {

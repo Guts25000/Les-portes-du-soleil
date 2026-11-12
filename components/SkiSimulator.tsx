@@ -6,6 +6,8 @@ import type { Input } from '@/game/physics';
 import { bboxOf } from '@/lib/geo';
 import { DIFF_COLOR, DIFF_LABEL } from '@/lib/estimates';
 import { MEDAL_ICON, medalFor, type MedalTargets } from '@/lib/championship';
+import { ghostKey } from '@/game/ghost';
+import { QUALITY_LABEL, loadQuality, saveQuality, type QualityLevel } from '@/game/quality';
 import { fmtTime, getPlayerName, leaderboard, personalBest, saveRun, setPlayerName, type RunResult } from '@/lib/scores';
 
 interface Props {
@@ -25,6 +27,7 @@ function nearby(piste: Piste, domain: DomainData) {
   return {
     pistes: domain.pistes.filter((p) => p.segments.some((seg) => inBox(seg))),
     lifts: domain.lifts.filter((l) => inBox(l.line)),
+    parks: domain.pois.filter((p) => p.kind === 'snowpark' && inBox([p.coord])).map((p) => p.coord),
   };
 }
 
@@ -41,6 +44,10 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
   const [approx, setApprox] = useState(false);
   const [noBuildings, setNoBuildings] = useState(false);
   const [player, setPlayer] = useState(getPlayerName());
+  const [quality, setQuality] = useState<QualityLevel>(() => loadQuality());
+  const [muted, setMuted] = useState(false);
+  const [trickPop, setTrickPop] = useState<Hud['lastTrick']>(null);
+  const lastTrickId = useRef(0);
   const exitRef = useRef(onExit);
   exitRef.current = onExit;
   const runRef = useRef(onRun);
@@ -54,15 +61,28 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
       piste,
       nearbyPistes: nb.pistes,
       nearbyLifts: nb.lifts,
+      parks: nb.parks,
+      quality,
       onHud: (h) => {
         setHud(h);
         if (h.phase !== 'loading') setLoading(null);
+        if (h.lastTrick && h.lastTrick.id !== lastTrickId.current) {
+          lastTrickId.current = h.lastTrick.id;
+          setTrickPop(h.lastTrick);
+        }
       },
       onFinish: async (r) => {
         setResult(r);
         runRef.current?.(r);
         const pb = personalBest(piste.id);
         setPrevBest(pb);
+        if (!pb || r.timeS < pb.timeS) {
+          try {
+            localStorage.setItem(ghostKey(piste.id), r.ghost);
+          } catch {
+            /* stockage plein : pas de fantôme */
+          }
+        }
         const run: RunResult = {
           pisteId: piste.id,
           pisteName: piste.name,
@@ -95,7 +115,13 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
       g.dispose();
       game.current = null;
     };
-  }, [piste, domain]);
+  }, [piste, domain, quality]);
+
+  useEffect(() => {
+    if (!trickPop) return;
+    const t = setTimeout(() => setTrickPop(null), 1600);
+    return () => clearTimeout(t);
+  }, [trickPop]);
 
   const press = (k: keyof Input, v: boolean) => {
     if (game.current) game.current.input[k] = v;
@@ -250,7 +276,7 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
             </div>
           </div>
           <div className="mx-auto mt-2 hidden max-w-3xl text-center text-[10px] text-white/50 md:block">
-            ←/→ tourner · ↑ pousser · ↓ freiner · Espace sauter (+ ←/→ en l'air : rotation) · Shift aéro / grab · E remontée · C caméra · M carte · R recommencer · Échap quitter
+            ←/→ tourner · ↑ pousser · ↓ freiner · Espace : maintenir pour charger, relâcher pour sauter · En l'air : ←/→ spins, ↑/↓ flips, Shift grab · Shift au sol : aéro · T rewind · E remontée · C caméra · M carte · R recommencer · Échap
           </div>
         </div>
       )}
@@ -260,6 +286,42 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
           <div className="text-[120px] font-black text-white drop-shadow-[0_8px_30px_rgba(31,107,255,0.8)]">{hud.countdown}</div>
         </div>
       )}
+      {/* combo en cours (style arcade) */}
+      {hud?.combo && !result && (
+        <div className="pointer-events-none absolute left-3 top-24 max-w-[60vw] md:left-6 md:top-28">
+          <div className="text-[11px] font-bold uppercase tracking-[0.25em] text-glacier-200/70">Combo</div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-4xl font-black tabular-nums text-white drop-shadow-lg md:text-5xl">{hud.combo.total.toLocaleString('fr-FR')}</span>
+            <span className="rounded-lg bg-amber-400 px-1.5 text-lg font-black text-anthracite-950">x{hud.combo.mult}</span>
+          </div>
+          <div className="mt-1 text-[12px] font-semibold text-glacier-100/85">{hud.combo.names.join(' + ')}</div>
+          <div className="mt-1.5 h-1 w-40 overflow-hidden rounded-full bg-white/15">
+            <div className="h-full bg-amber-300" style={{ width: `${hud.combo.window * 100}%` }} />
+          </div>
+        </div>
+      )}
+      {trickPop && !result && (
+        <div key={trickPop.id} className="pointer-events-none absolute left-1/2 top-[18%] -translate-x-1/2 animate-fade-up text-center">
+          <div className={`text-sm font-black uppercase tracking-[0.3em] ${({ Perfect: 'text-emerald-300', Good: 'text-sky-200', Sloppy: 'text-amber-300' })[trickPop.quality]}`}>{trickPop.quality}</div>
+          <div className="whitespace-nowrap text-3xl font-black italic text-white drop-shadow-[0_4px_18px_rgba(0,0,0,0.6)] md:text-5xl">{trickPop.name}</div>
+          <div className="text-lg font-bold text-amber-300">+{trickPop.points.toLocaleString('fr-FR')}</div>
+        </div>
+      )}
+      {hud && !result && (hud.charge > 0.05 || hud.switchStance || hud.grinding || hud.ghost) && (
+        <div className="pointer-events-none absolute bottom-40 left-1/2 flex -translate-x-1/2 flex-col items-center gap-1.5 md:bottom-44">
+          {hud.charge > 0.05 && (
+            <div className="h-2 w-40 overflow-hidden rounded-full bg-black/40">
+              <div className="h-full bg-gradient-to-r from-sky-300 to-amber-300" style={{ width: `${hud.charge * 100}%` }} />
+            </div>
+          )}
+          <div className="flex gap-1.5 text-[11px] font-bold">
+            {hud.grinding && <span className="rounded bg-violet-500/80 px-2 py-0.5">GRIND</span>}
+            {hud.switchStance && <span className="rounded bg-white/20 px-2 py-0.5">SWITCH</span>}
+            {hud.ghost && <span className="rounded bg-sky-400/40 px-2 py-0.5">👻 fantôme du record</span>}
+          </div>
+        </div>
+      )}
+
       {hud?.message && (
         <div className="pointer-events-none absolute left-1/2 top-[28%] -translate-x-1/2 animate-fade-up whitespace-nowrap rounded-2xl bg-black/35 px-5 py-2 text-2xl font-extrabold tracking-wide text-white backdrop-blur md:text-3xl">
           {hud.message}
@@ -279,6 +341,7 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
             {touchBtn('jump', '⤒', 'h-14 w-14')}
             {touchBtn('down', '▼', 'h-14 w-14')}
             {hud.riding && touchBtn('jump', '⏩', 'col-span-2 h-12 w-full text-base')}
+            <button className="glass col-span-2 h-10 rounded-2xl text-sm font-bold" onClick={() => game.current?.rewind()}>⏪</button>
           </div>
         </div>
       )}
@@ -287,7 +350,35 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
           {!free && (
             <button className="glass rounded-xl px-3 py-1.5 text-[12px]" onClick={goFree}>🗺️ Mode libre</button>
           )}
+          <button className="glass rounded-xl px-3 py-1.5 text-[12px]" onClick={() => game.current?.rewind()}>⏪ Rewind{hud.rewinds ? ` (${hud.rewinds})` : ''}</button>
           <button className="glass rounded-xl px-3 py-1.5 text-[12px]" onClick={() => game.current?.toggleCamera()}>🎥 Caméra</button>
+          <button
+            className="glass rounded-xl px-3 py-1.5 text-[12px]"
+            onClick={() => {
+              game.current?.setMuted(!muted);
+              setMuted(!muted);
+            }}
+          >
+            {muted ? '🔇 Son' : '🔊 Son'}
+          </button>
+          <select
+            value={quality}
+            onChange={(e) => {
+              const q = e.target.value as QualityLevel;
+              saveQuality(q);
+              setResult(null);
+              setLoading('Changement de qualité…');
+              setQuality(q);
+            }}
+            className="glass rounded-xl px-2 py-1.5 text-[12px] outline-none"
+            title="Qualité graphique (recharge la descente)"
+          >
+            {(Object.keys(QUALITY_LABEL) as QualityLevel[]).map((q) => (
+              <option key={q} value={q} className="bg-anthracite-900">
+                🎨 {QUALITY_LABEL[q]}
+              </option>
+            ))}
+          </select>
           <button className="glass rounded-xl px-3 py-1.5 text-[12px]" onClick={() => game.current?.unstuck()}>↺ Bloqué ?</button>
         </div>
       )}
@@ -300,7 +391,7 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
             <div className="text-lg font-semibold">{piste.name}</div>
             <div className="mt-1 text-sm text-glacier-200/70">{error ? `Erreur : ${error}` : loading}</div>
             <p className="mt-4 text-[11px] leading-relaxed text-glacier-200/40">
-              Parcours, remontées et bâtiments : OpenStreetMap · Relief : MNT réel. Forêt, jalons, panneaux, filets et autres skieurs sont générés pour l'ambiance.
+              Parcours, remontées, bâtiments, routes et snowparks : OpenStreetMap · Relief : MNT réel. Forêt, jalons, panneaux, filets, modules freestyle et autres skieurs sont générés pour l'ambiance.
             </p>
             {error && <button className="btn-ghost mt-4" onClick={onExit}>Retour à la carte</button>}
           </div>
@@ -334,7 +425,7 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
                 ['Vitesse moy.', `${Math.round(result.avgKmh)} km/h`],
                 ['Score', result.score.toLocaleString('fr-FR')],
                 ['Figures', String(result.tricks)],
-                ['Chutes', String(result.crashes)],
+                ['Chutes / rewinds', `${result.crashes} / ${result.rewinds}`],
               ].map(([k, v]) => (
                 <div key={k} className="rounded-xl bg-white/5 py-2">
                   <div className="label">{k}</div>

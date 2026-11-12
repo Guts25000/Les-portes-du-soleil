@@ -9,7 +9,7 @@ import type { Difficulty, LngLat } from '@/lib/types';
  *    (noms, secteurs et couleurs)
  *  - Les Gets : https://en.portesdusoleil.com/in-winter/slopes-and-lifts-en/ski-lifts-les-gets
  *    (noms et secteurs, sans couleurs)
- * Couleurs des Gets : recoupées sur des guides de la station (voir `src`). Quand les sources
+ * Couleurs des Gets : lues sur le plan officiel des pistes, ou recoupées sur des guides (voir `src`). Quand les sources
  * ne concordent pas ou qu'aucune ne précise la couleur, `color` vaut null et l'application
  * affiche la couleur renseignée dans OpenStreetMap.
  *
@@ -47,6 +47,7 @@ const CH1066 = 'chalets1066.com — « Skier aux Chavannes »';
 const MOREMTN = 'moremountain.com — « Best ski runs in Morzine and Les Gets »';
 const POPLI = 'poplidays.com — guide Les Gets';
 const RMNET = 'remontees-mecaniques.net — TKD Tête des Crêts';
+const PLAN = 'Plan des pistes officiel Les Gets–Morzine (image fournie)';
 
 export const OFFICIAL_PISTES: OfficialPiste[] = [
   // ---------------- MORZINE — Pleney
@@ -91,45 +92,45 @@ export const OFFICIAL_PISTES: OfficialPiste[] = [
   { name: 'Les Creux', zone: 'Chamossière', color: 'noire' },
   // ---------------- LES GETS — Chavannes
   { name: 'Piste 64', zone: 'Chavannes', color: null },
-  { name: 'Bleuet', zone: 'Chavannes', color: null },
-  { name: 'Bruyère', zone: 'Chavannes', color: null },
-  { name: 'Chardon Bleu', zone: 'Chavannes', color: null },
-  { name: 'Crocus', zone: 'Chavannes', color: null },
+  { name: 'Bleuet', zone: 'Chavannes', color: 'bleue', src: PLAN },
+  { name: 'Bruyère', zone: 'Chavannes', color: 'bleue', src: PLAN },
+  { name: 'Chardon Bleu', zone: 'Chavannes', color: 'bleue', src: PLAN },
+  { name: 'Crocus', zone: 'Chavannes', color: 'bleue', src: PLAN },
   { name: 'Fougère', zone: 'Chavannes', color: null },
   { name: 'Gentiane', zone: 'Chavannes', color: 'bleue', src: RMNET },
   { name: 'Vieux Chêne', zone: 'Chavannes', color: null },
   { name: 'Perce-Neige', zone: 'Chavannes', color: null },
-  { name: 'Orchis', zone: 'Chavannes', color: null },
+  { name: 'Orchis', zone: 'Chavannes', color: 'rouge', src: PLAN },
   // ---------------- LES GETS — Ranfoilly-Nauchets
   { name: 'Cyclamen', zone: 'Ranfoilly-Nauchets', color: 'bleue', aliases: ['Cyclamens'], src: RMNET },
-  { name: 'Tulipe', zone: 'Ranfoilly-Nauchets', color: null, note: 'Donnée bleue ou rouge selon les sources : couleur OSM affichée.' },
+  { name: 'Tulipe', zone: 'Ranfoilly-Nauchets', color: 'rouge', src: PLAN, note: 'Plan : rouge ; certaines sources récentes la donnent bleue.' },
   { name: 'Violette', zone: 'Ranfoilly-Nauchets', color: 'bleue', src: CH1066 },
   { name: 'Ambresalles', zone: 'Ranfoilly-Nauchets', color: 'rouge', aliases: ['Ambresalle'], src: CH1066 },
   { name: 'Arnica', zone: 'Ranfoilly-Nauchets', color: 'rouge', src: CH1066 },
   { name: 'Fenerets', zone: 'Ranfoilly-Nauchets', color: 'rouge', src: CH1066 },
   { name: 'Rhodos', zone: 'Ranfoilly-Nauchets', color: 'rouge', src: CH1066 },
-  { name: 'Sautenailles', zone: 'Ranfoilly-Nauchets', color: null },
+  { name: 'Sautenailles', zone: 'Ranfoilly-Nauchets', color: 'rouge', src: PLAN },
   // ---------------- LES GETS — Rosta-Perrières
-  { name: 'Campanule', zone: 'Rosta-Perrières', color: null },
+  { name: 'Campanule', zone: 'Rosta-Perrières', color: 'bleue', src: PLAN },
   { name: 'Les Trembles', zone: 'Rosta-Perrières', color: null },
   { name: 'Reine des Prés', zone: 'Rosta-Perrières', color: 'bleue', src: CH1066 },
-  { name: 'Renardière', zone: 'Rosta-Perrières', color: null },
+  { name: 'Renardière', zone: 'Rosta-Perrières', color: 'bleue', src: PLAN },
   { name: 'Vorosses', zone: 'Rosta-Perrières', color: 'bleue', src: CH1066 },
   { name: 'Eglantine', zone: 'Rosta-Perrières', color: 'rouge', src: CH1066 },
   { name: 'Mélèzes', zone: 'Rosta-Perrières', color: 'rouge', src: CH1066 },
   { name: 'Myrtilles', zone: 'Rosta-Perrières', color: 'noire', src: POPLI },
   { name: 'Yéti', zone: 'Rosta-Perrières', color: 'noire', src: CH1066 },
   // ---------------- LES GETS — Mont-Chéry
-  { name: 'Ourson', zone: 'Mont-Chéry', color: null },
+  { name: 'Ourson', zone: 'Mont-Chéry', color: 'bleue', src: PLAN },
   { name: 'Chamois', zone: 'Mont-Chéry', color: 'rouge', src: MOREMTN },
   { name: 'Epervier', zone: 'Mont-Chéry', color: 'rouge', src: MOREMTN },
-  { name: 'Lièvre', zone: 'Mont-Chéry', color: null },
-  { name: 'Marmotte', zone: 'Mont-Chéry', color: null },
+  { name: 'Lièvre', zone: 'Mont-Chéry', color: 'rouge', src: PLAN },
+  { name: 'Marmotte', zone: 'Mont-Chéry', color: 'rouge', src: PLAN },
   { name: 'Cabri', zone: 'Mont-Chéry', color: null },
   { name: 'Bouquetin', zone: 'Mont-Chéry', color: 'noire', src: MOREMTN },
-  { name: 'Chevreuil', zone: 'Mont-Chéry', color: null },
+  { name: 'Chevreuil', zone: 'Mont-Chéry', color: 'noire', src: PLAN },
   { name: 'Gazelle', zone: 'Mont-Chéry', color: 'noire', src: MOREMTN },
-  { name: 'Mouflon', zone: 'Mont-Chéry', color: null },
+  { name: 'Mouflon', zone: 'Mont-Chéry', color: 'noire', src: PLAN },
 ];
 
 export const SECTOR_SOURCES = [

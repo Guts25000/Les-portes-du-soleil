@@ -4,6 +4,7 @@
  * Tourner à gauche = h augmente.
  */
 import type { Track } from './track';
+import { evaluateLanding, grabName, type Quality } from './tricks';
 
 export const G = 9.81;
 
@@ -52,13 +53,19 @@ export interface Skier {
   offPiste: boolean;
   turn: number; // -1..1, pour l'animation
   edgeLoss: number; // intensité du dérapage (particules)
+  flip: number; // rotation avant/arrière en l'air (rad)
+  charge: number; // préparation du saut 0..1 (Espace maintenu)
+  grabKind: string | null;
+  switchStance: boolean; // ride à l'envers
+  /** Vitesse verticale réelle au sol (suivi du relief), pour les décollages. */
+  groundVy: number;
 }
 
 export type GameEvent =
-  | { type: 'trick'; name: string; points: number }
+  | { type: 'trick'; name: string; points: number; quality?: Quality }
   | { type: 'crash'; reason: string }
   | { type: 'respawn' }
-  | { type: 'land'; air: number }
+  | { type: 'land'; air: number; quality: Quality }
   | { type: 'bounds' };
 
 export function createSkier(track: Track, height: Env['height']): Skier {
@@ -83,6 +90,11 @@ export function createSkier(track: Track, height: Env['height']): Skier {
     offPiste: false,
     turn: 0,
     edgeLoss: 0,
+    flip: 0,
+    charge: 0,
+    grabKind: null,
+    switchStance: false,
+    groundVy: 0,
   };
 }
 
@@ -99,9 +111,12 @@ export function respawnOnTrack(k: Skier, env: Env, s: number) {
   k.heading = Math.atan2(a.tx, a.tz);
   k.grounded = true;
   k.spin = 0;
+  k.flip = 0;
+  k.charge = 0;
   k.airTime = 0;
   k.crashTimer = 0;
   k.trackIdx = a.i;
+  k.switchStance = false;
 }
 
 /** Avance la simulation de dt secondes (appeler avec dt ≤ 1/60). */
@@ -166,32 +181,33 @@ export function step(k: Skier, input: Input, env: Env, dt: number, events: GameE
     k.vx += ax * dt;
     k.vz += az * dt;
 
-    // saut
-    if (inp.jump && !k.jumpHeld) {
+    // saut chargé : on prépare en maintenant Espace, on décolle en relâchant
+    if (inp.jump) k.charge = Math.min(1, k.charge + dt / 0.55);
+    else if (k.jumpHeld) {
       k.grounded = false;
-      // vitesse verticale = composante liée à la pente + impulsion
-      const slopeVy = gx * k.vx + gz * k.vz;
-      k.vy = slopeVy + 5.2 + Math.min(3, speed * 0.06);
-      k.airTime = 0;
-      k.spin = 0;
-      k.grabTime = 0;
+      // vitesse verticale = composante liée à la pente + impulsion (dépend de la charge)
+      const slopeVy = Math.max(gx * k.vx + gz * k.vz, k.groundVy);
+      k.vy = slopeVy + 3.4 + k.charge * 4.6 + Math.min(3, speed * 0.06);
+      resetAir(k);
     }
 
     const nx = k.x + k.vx * dt, nz = k.z + k.vz * dt;
     const hNext = env.height(nx, nz);
     // décollage naturel sur une rupture de pente (bosse, mur)
     const vySlope = (hNext - k.y) / dt;
-    const prevVy = gx * k.vx + gz * k.vz;
-    if (k.grounded && prevVy - vySlope > 7 && speed > 10) {
+    const prevVy = k.groundVy;
+    if (k.grounded && prevVy - vySlope > 7 && speed > 8) {
       k.grounded = false;
-      k.vy = prevVy;
-      k.airTime = 0;
-      k.spin = 0;
-      k.grabTime = 0;
+      // un « pop » au bon moment au bord du tremplin donne plus de hauteur
+      k.vy = prevVy + (inp.jump ? 1.5 + k.charge * 2.5 : 0);
+      resetAir(k);
     }
     k.x = nx;
     k.z = nz;
-    if (k.grounded) k.y = hNext;
+    if (k.grounded) {
+      k.y = hNext;
+      k.groundVy = vySlope;
+    }
   } else {
     // --- En l'air
     k.airTime += dt;
@@ -203,8 +219,13 @@ export function step(k: Skier, input: Input, env: Env, dt: number, events: GameE
       k.vx *= ns / sp;
       k.vz *= ns / sp;
     }
-    if (steer) k.spin += steer * 7.5 * dt;
-    if (inp.tuck) k.grabTime += dt;
+    if (steer) k.spin += steer * 7.8 * dt;
+    const flipDir = (inp.up ? 1 : 0) - (inp.down ? 1 : 0);
+    if (flipDir) k.flip += flipDir * 6.2 * dt;
+    if (inp.tuck) {
+      if (k.grabTime === 0) k.grabKind = grabName(steer !== 0, flipDir);
+      k.grabTime += dt;
+    }
     k.x += k.vx * dt;
     k.z += k.vz * dt;
     k.y += k.vy * dt;
@@ -212,11 +233,13 @@ export function step(k: Skier, input: Input, env: Env, dt: number, events: GameE
     if (k.y <= h) {
       k.y = h;
       k.grounded = true;
+      k.groundVy = k.vy;
       k.vy = 0;
       land(k, events);
     }
   }
   k.jumpHeld = inp.jump;
+  if (k.grounded && !inp.jump) k.charge = 0;
 
   // --- Collisions
   if (k.crashTimer <= 0) {
@@ -268,26 +291,33 @@ function crash(k: Skier, events: GameEvent[], reason: string) {
   k.vx *= 0.15;
   k.vz *= 0.15;
   k.spin = 0;
+  k.flip = 0;
+  k.charge = 0;
   events.push({ type: 'crash', reason });
 }
 
-function land(k: Skier, events: GameEvent[]) {
-  const air = k.airTime;
-  events.push({ type: 'land', air });
-  const turns = Math.abs(k.spin) / (Math.PI * 2);
-  const rot = Math.round(turns);
-  const err = Math.abs(turns - rot) * 360; // degrés d'écart à la réception
-  if (rot >= 1 && err < 40) {
-    const name = `${rot * 360}${k.grabTime > 0.25 ? ' grab' : ''}`;
-    events.push({ type: 'trick', name, points: 450 * rot + (k.grabTime > 0.25 ? 200 : 0) + Math.round(air * 80) });
-  } else if (err >= 60 && Math.abs(k.spin) > 0.6) {
-    crash(k, events, 'Réception ratée');
-  } else if (k.grabTime > 0.3) {
-    events.push({ type: 'trick', name: 'Grab', points: 180 + Math.round(air * 60) });
-  } else if (air > 1.1) {
-    events.push({ type: 'trick', name: 'Big air', points: Math.round(air * 120) });
-  }
-  k.spin = 0;
-  k.grabTime = 0;
+function resetAir(k: Skier) {
   k.airTime = 0;
+  k.spin = 0;
+  k.flip = 0;
+  k.grabTime = 0;
+  k.grabKind = null;
+  k.charge = 0;
+}
+
+function land(k: Skier, events: GameEvent[]) {
+  const r = evaluateLanding({ spin: k.spin, flip: k.flip, grabTime: k.grabTime, grabKind: k.grabKind, air: k.airTime });
+  events.push({ type: 'land', air: k.airTime, quality: r.quality });
+  if (r.crash) {
+    crash(k, events, r.reason ?? 'Chute');
+  } else {
+    k.vx *= r.speedFactor;
+    k.vz *= r.speedFactor;
+    if (r.switchFlip) {
+      k.heading += Math.PI;
+      k.switchStance = !k.switchStance;
+    }
+    if (r.name && r.points > 0) events.push({ type: 'trick', name: r.name, points: r.points, quality: r.quality });
+  }
+  resetAir(k);
 }

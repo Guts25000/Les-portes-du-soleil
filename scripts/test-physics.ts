@@ -36,7 +36,7 @@ assert.ok(turn.k.x > 0.5, `virage gauche → x>0 (x=${turn.k.x.toFixed(2)})`);
 assert.ok(turn.k.lateral > 0, 'latéral positif = gauche');
 
 // Saut + 360 : appui espace, puis gauche maintenu le temps d'un tour
-const jump = run(6, (t) => ({ jump: t > 3 && t < 3.05, left: t > 3.05 && t < 3.05 + (Math.PI * 2) / 7.5 }));
+const jump = run(6, (t) => ({ jump: t > 3 && t < 3.3, left: t > 3.32 && t < 3.32 + (Math.PI * 2) / 7.8 }));
 const tricks = jump.ev.filter((e) => e.type === 'trick');
 console.log('évènements saut :', jump.ev.map((e) => e.type + ('name' in e ? ':' + e.name : '')).join(', '));
 assert.ok(tricks.some((e) => e.type === 'trick' && e.name.startsWith('360')), 'figure 360 détectée');
@@ -47,4 +47,14 @@ const k = createSkier(track, env.height);
 const ev: GameEvent[] = [];
 for (let t = 0; t < 20; t += 1 / 120) step(k, emptyInput(), envTree, 1 / 120, ev);
 assert.ok(ev.some((e) => e.type === 'crash'), 'chute détectée');
+// Backflip : saut chargé puis ↓ pendant un tour complet
+const bf = run(7, (t) => ({ jump: t > 3 && t < 3.55, down: t > 3.57 && t < 3.57 + (Math.PI * 2) / 6.2 }));
+console.log('backflip :', bf.ev.map((e) => e.type + ('name' in e ? ':' + e.name : '') + ('quality' in e && e.quality ? '(' + e.quality + ')' : '')).join(', '));
+assert.ok(bf.ev.some((e) => e.type === 'trick' && e.name.includes('Backflip')), 'backflip détecté');
+// Flip à moitié → chute
+const half = run(7, (t) => ({ jump: t > 3 && t < 3.55, down: t > 3.57 && t < 3.57 + Math.PI / 6.2 }));
+assert.ok(half.ev.some((e) => e.type === 'crash'), 'demi-flip = chute');
+// 180 → switch
+const sw = run(6, (t) => ({ jump: t > 3 && t < 3.3, left: t > 3.32 && t < 3.32 + Math.PI / 7.8 }));
+assert.ok(sw.k.switchStance, 'réception en switch après un 180');
 console.log('✓ physique OK');

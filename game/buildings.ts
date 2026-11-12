@@ -20,9 +20,17 @@ const OVERPASS = [
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
 
-export async function fetchBuildings(bbox: [number, number, number, number]): Promise<OsmBuilding[]> {
+export interface OsmRoad {
+  id: number;
+  line: LngLat[];
+  kind: string;
+}
+
+/** Bâtiments + routes du secteur (une seule requête Overpass). */
+export async function fetchVillage(bbox: [number, number, number, number]): Promise<{ buildings: OsmBuilding[]; roads: OsmRoad[] }> {
   const [w, s, e, n] = bbox;
-  const q = `[out:json][timeout:60];(way["building"](${s},${w},${n},${e});way["aerialway"="station"](${s},${w},${n},${e}););out geom;`;
+  const b = `${s},${w},${n},${e}`;
+  const q = `[out:json][timeout:60];(way["building"](${b});way["aerialway"="station"](${b});way["highway"~"^(trunk|primary|secondary|tertiary|unclassified|residential|living_street|service)$"](${b}););out geom;`;
   let lastErr: unknown = null;
   for (const url of OVERPASS) {
     try {
@@ -34,14 +42,26 @@ export async function fetchBuildings(bbox: [number, number, number, number]): Pr
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = (await r.json()) as { elements: { type: string; id: number; geometry?: { lat: number; lon: number }[]; tags?: Record<string, string> }[] };
-      return j.elements
-        .filter((el) => el.type === 'way' && el.geometry && el.geometry.length >= 4)
-        .map((el) => ({ id: el.id, ring: el.geometry!.map((g) => [g.lon, g.lat] as LngLat), tags: el.tags ?? {} }));
+      const buildings: OsmBuilding[] = [];
+      const roads: OsmRoad[] = [];
+      for (const el of j.elements) {
+        if (el.type !== 'way' || !el.geometry || el.geometry.length < 2) continue;
+        const line = el.geometry.map((g) => [g.lon, g.lat] as LngLat);
+        const t = el.tags ?? {};
+        if (t.highway) roads.push({ id: el.id, line, kind: t.highway });
+        else if (line.length >= 4) buildings.push({ id: el.id, ring: line, tags: t });
+      }
+      return { buildings, roads };
     } catch (e) {
       lastErr = e;
     }
   }
   throw lastErr ?? new Error('Overpass indisponible');
+}
+
+/** Largeur (m) d'une route selon son type OSM. */
+export function roadWidth(kind: string): number {
+  return ({ trunk: 9, primary: 8, secondary: 7, tertiary: 6, unclassified: 5, residential: 5, living_street: 4, service: 3.5 } as Record<string, number>)[kind] ?? 4;
 }
 
 // ------------------------------------------------------------------ géométrie plane
@@ -171,7 +191,8 @@ export interface BuildingModel {
   cx: number;
   cz: number;
   radius: number;
-  base: number;
+  base: number; // niveau du rez-de-chaussée
+  foot: number; // bas des murs (sous le point le plus bas du terrain)
   eaves: number; // hauteur des murs (au-dessus de base)
   ridge: number; // hauteur du faîtage
   kind: 'chalet' | 'bloc';
@@ -204,15 +225,22 @@ export function modelBuilding(id: number, footprint: Pt[], tags: Record<string, 
   const r = minAreaRect(poly);
   const fill = area / r.area;
   const chalet = fill > 0.85 && area < 3000 && tags.roof_shape !== 'flat';
-  let base = Infinity;
-  for (const p of poly) base = Math.min(base, height(p.x, p.z));
-  base = Math.min(base, height(r.cx, r.cz));
+  let lo = Infinity, sum = 0;
+  for (const p of poly) {
+    const h = height(p.x, p.z);
+    lo = Math.min(lo, h);
+    sum += h;
+  }
+  const hc = height(r.cx, r.cz);
+  lo = Math.min(lo, hc);
+  const base = (sum + hc) / (poly.length + 1);
+  const foot = lo - 1;
   const eaves = wallHeight(tags, area);
   const span = Math.min(r.w, r.d);
   const ridge = chalet ? eaves + Math.min(7, span * 0.25) : eaves;
   let radius = 0;
   for (const p of poly) radius = Math.max(radius, Math.hypot(p.x - r.cx, p.z - r.cz));
-  return { id, footprint: poly, cx: r.cx, cz: r.cz, radius, base, eaves, ridge, kind: chalet ? 'chalet' : 'bloc' };
+  return { id, footprint: poly, cx: r.cx, cz: r.cz, radius, base, foot, eaves, ridge, kind: chalet ? 'chalet' : 'bloc' };
 }
 
 // ------------------------------------------------------------------ maillage
@@ -266,7 +294,7 @@ function addChalet(m: MeshArrays, b: BuildingModel, rect: ReturnType<typeof minA
   }
   const cu = Math.cos(ang), su = Math.sin(ang);
   const P = (u: number, v: number, y: number): V3 => [b.cx + u * cu - v * su, y, b.cz + u * su + v * cu];
-  const y0 = b.base - 2.5, yS = b.base + 1.4, yE = b.base + b.eaves, yR = b.base + b.ridge;
+  const y0 = b.foot, yS = b.base + 1.4, yE = b.base + b.eaves, yR = b.base + b.ridge;
   const hw = W / 2, hd = D / 2;
   const nU: V3 = [cu, 0, su], nV: V3 = [-su, 0, cu];
   const neg = (n: V3): V3 => [-n[0], -n[1], -n[2]];
@@ -320,7 +348,7 @@ function addChalet(m: MeshArrays, b: BuildingModel, rect: ReturnType<typeof minA
 function addBloc(m: MeshArrays, b: BuildingModel) {
   const poly = b.footprint;
   const ccw = polygonArea(poly) > 0;
-  const y0 = b.base - 2.5, yE = b.base + b.eaves;
+  const y0 = b.foot, yE = b.base + b.eaves;
   for (let i = 0; i < poly.length; i++) {
     const p = poly[i], q = poly[(i + 1) % poly.length];
     const dx = q.x - p.x, dz = q.z - p.z;

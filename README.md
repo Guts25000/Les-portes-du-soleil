@@ -56,13 +56,17 @@ Aucune donnée « en direct » n'est inventée : tant qu'un flux officiel n'est 
 
 **Ski Simulator (phase 3)** — `game/`
 - Monde ouvert : la piste choisie + 1,3 km autour en relief détaillé (MNT zoom 13–14), panorama réel sur 5,5 km.
-- Toutes les pistes OSM de la zone sont damées et balisées : jalons à la couleur de la piste (pointe orange côté droit), panneau avec le nom au départ de chaque piste, filets et panneaux « danger » dans les virages pentus, arches DÉPART / ARRIVÉE.
-- Bâtiments réels : emprises OpenStreetMap ; chalets à toit à deux pans enneigé (bois sur soubassement en pierre, fenêtres), grands bâtiments extrudés ; collisions.
-- Remontées jouables (mode libre) : gares aval/amont, pylônes, câbles, sièges et cabines animés ; touche E pour embarquer, Espace pour accélérer, débarquement en haut. Téléskis tractés au sol.
-- Mode chrono (piste choisie) puis « mode libre » pour enchaîner pistes et remontées. Mini-carte (M), nom de la piste sous les skis, hors-piste signalé.
-- Physique : gravité projetée sur la pente, carving, position aéro, chasse-neige, neige profonde, sauts, 360/720, grabs, chutes (arbres, chalets, pylônes, filets, skieurs).
-- Graphismes : neige avec micro-relief (normal map), soleil et halo dans le ciel, épicéas enneigés à 3 étages, ombres, particules, effet de vitesse.
-- Commandes : ←/→, ↑, ↓, Espace, Shift, E, C (caméra), M (carte), R, Échap ; boutons tactiles sur mobile.
+- Concordance avec le réel : pistes, remontées, bâtiments, routes déneigées et snowparks viennent d'OpenStreetMap ; le terrain est terrassé sous chaque bâtiment ; les gares OSM remplacent les gares génériques.
+- Gameplay arcade inspiré de Rider Republic :
+  - saut chargé (maintenir Espace, relâcher ; « pop » au bord des tremplins) ;
+  - en l'air : spins par demi-tours (180, 360, 540…) avec ←/→, frontflips/backflips avec ↑/↓, grabs avec Shift (Mute, Japan, Nose, Tail) ;
+  - réception Perfect / Good / Sloppy (bonus de vitesse sur Perfect, ralenti sur les grosses figures), réception en switch ;
+  - combos avec multiplicateur (jusqu'à x5), perdus en cas de chute ;
+  - tremplins et rails/boxes le long de la piste et aux emplacements réels des snowparks ; grinds ;
+  - rewind (T) de 3 s, fantôme de votre meilleur temps, sons procéduraux (vent, carres, réceptions).
+- Signalisation : jalons à la couleur des pistes (pointe orange côté droit), panneaux de départ, panneaux danger et filets, arches DÉPART/ARRIVÉE, panneaux SNOWPARK.
+- Remontées jouables en mode libre (E pour embarquer, Espace pour accélérer), mini-carte (M).
+- Graphismes : ciel physique à diffusion atmosphérique, éclairage d'environnement (IBL), bloom, MSAA, étalonnage/vignettage dynamique, ombres jusqu'à 4096, paillettes de neige au soleil, neige à micro-relief, épicéas enneigés. Trois niveaux de qualité (Basse / Haute / Ultra) sélectionnables en jeu.
 - Si le MNT est indisponible, un terrain approximatif est reconstruit **et signalé**.
 
 **Championnat Pleney · Nyon · Les Gets** — `data/morzineLesGets.ts`, `lib/sectorMatch.ts`, `lib/championship.ts`

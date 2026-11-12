@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import { GhostRecorder, GhostPlayer, RewindBuffer } from '../game/ghost';
+const rec = new GhostRecorder();
+for (let t = 0; t <= 5; t += 0.05) rec.push(0.05, t * 10, 100 - t, 0, 0.1);
+const g = GhostPlayer.parse(rec.serialize())!;
+assert.ok(g && Math.abs(g.duration - 5) < 0.2);
+const p = g.sample(2.5)!;
+assert.ok(Math.abs(p.x - 25) < 1.1, `position interpolée (${p.x})`);
+assert.equal(g.sample(99), null);
+assert.equal(GhostPlayer.parse('pas du json'), null);
+const rb = new RewindBuffer<{ v: number }>(8, 0.1);
+for (let i = 0; i < 100; i++) rb.push(0.1, () => ({ v: i }));
+const back = rb.rewind(3)!;
+assert.ok(back.v >= 66 && back.v <= 70, `rewind 3 s (${back.v})`);
+assert.ok(rb.rewind(3)!.v < back.v, 'rewinds successifs');
+console.log('✓ fantôme & rewind OK');

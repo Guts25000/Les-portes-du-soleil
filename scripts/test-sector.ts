@@ -19,7 +19,7 @@ const data: DomainData = {
     mk('Aigle Rouge partie basse', 'rouge', [[6.735, 46.158], [6.73, 46.163]]),
     mk('Pâquérages', 'bleue', [[6.725, 46.16], [6.72, 46.163]]),
     mk('Piste B', 'bleue', [[6.70, 46.166], [6.705, 46.175]]),
-    mk('Tulipe', 'bleue', [[6.678, 46.182], [6.672, 46.175]], 'Les Gets'),
+    mk('Fougère', 'bleue', [[6.672, 46.17], [6.668, 46.165]], 'Les Gets'),
     mk('Renard', 'rouge', [[6.70, 46.167], [6.704, 46.172]]),
   ],
 };
@@ -38,8 +38,9 @@ assert.equal(get("L'Aigle Rouge").osm.length, 2, 'parties haute et basse fusionn
 assert.equal(get("L'Aigle Rouge").piste!.line.length, 3, 'tracé chaîné');
 assert.ok(get('Les Paquerages').piste, 'accents/pluriels tolérés');
 assert.ok(get('Piste B').piste);
-assert.equal(get('Tulipe').difficulty, 'bleue', 'couleur OSM si pas de couleur officielle');
-assert.equal(get('Tulipe').colorSource, 'OSM');
+assert.equal(get('Fougère').difficulty, 'bleue', 'couleur OSM si pas de couleur officielle');
+assert.equal(get('Fougère').colorSource, 'OSM');
+assert.equal(get('Tulipe').difficulty, 'rouge', 'couleur du plan officiel');
 assert.equal(get('Le Chamois').colorSource, 'officielle');
 assert.equal(get('Gazelle').piste, null, 'piste absente d’OSM → manquante');
 assert.equal(get('Renard').difficulty, 'rouge');
