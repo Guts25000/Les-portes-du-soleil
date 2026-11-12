@@ -6,11 +6,12 @@
 import * as THREE from 'three';
 import type { Difficulty, Lift, LngLat, Piste } from '@/lib/types';
 import { DemSampler } from '@/lib/dem';
+import { IgnDem } from '@/lib/demIgn';
 import { LocalProjection, bboxOf, resample, smooth } from '@/lib/geo';
 import { DIFF_COLOR, LIFT_LABEL } from '@/lib/estimates';
 import { Track, SpatialHash, rng, fbm, valueNoise, type Pt } from './track';
 import { G, createSkier, emptyInput, respawnOnTrack, speedOf, step, type Env, type GameEvent, type Input, type Skier } from './physics';
-import { buildBuildingMesh, distToPolygonEdge, fetchVillage, modelBuilding, pointInPolygon, roadWidth, type BuildingModel, type OsmRoad } from './buildings';
+import { buildBuildingMesh, distToPolygonEdge, fetchVillage, modelBuilding, pointInPolygon, roadWidth, type BuildingModel, type OsmForest, type OsmRoad } from './buildings';
 import { Features, placeAlongTrack, placePark } from './features';
 import { Combo, type Quality } from './tricks';
 import { GhostPlayer, GhostRecorder, RewindBuffer, ghostKey } from './ghost';
@@ -134,6 +135,10 @@ export class SkiGame {
   private post!: PostFX;
   private features = new Features();
   private roads: OsmRoad[] = [];
+  private forests: OsmForest[] = [];
+  private pylons: Pt[] = [];
+  private forestMask: { data: Uint8ClampedArray; size: number; canvas: HTMLCanvasElement } | null = null;
+  demSource = 'AWS Terrain Tiles';
   private combo = new Combo();
   private lastTrick: Hud['lastTrick'] = null;
   private trickId = 0;
@@ -207,19 +212,28 @@ export class SkiGame {
     const demFar = new DemSampler(11);
     o.onLoading('Téléchargement du relief réel et des bâtiments OSM…');
     const villageP = fetchVillage(nearBox).catch(() => null);
-    const [okNear, okFar] = await Promise.all([demNear.preload(nearBox), demFar.preload(farBox)]);
+    const ign = new IgnDem();
+    const [okNearAws, okFar] = await Promise.all([
+      demNear.preload(nearBox),
+      demFar.preload(farBox),
+      ign.preload(nearBox, (d, t) => o.onLoading(`Relief haute précision IGN… ${Math.round((d / t) * 100)} %`)),
+    ]);
     if (this.disposed) return;
+    const useIgn = ign.loaded > 0;
+    if (useIgn) this.demSource = ign.failed ? 'IGN RGE ALTI (+ AWS hors France)' : 'IGN RGE ALTI';
+    const okNear = okNearAws || useIgn;
+    const nearSample = (p: LngLat) => (useIgn ? ign.sample(p) : null) ?? demNear.sample(p);
 
-    const h0 = demNear.sample(this.proj.toLngLat(pts[0].x, pts[0].z));
-    const h1 = demNear.sample(this.proj.toLngLat(pts[pts.length - 1].x, pts[pts.length - 1].z));
+    const h0 = nearSample(this.proj.toLngLat(pts[0].x, pts[0].z));
+    const h1 = nearSample(this.proj.toLngLat(pts[pts.length - 1].x, pts[pts.length - 1].z));
     if (h0 != null && h1 != null && h0 < h1) pts.reverse();
     this.track = new Track(pts);
     this.halfWidth = (o.piste.widthM ?? PISTE_WIDTH[o.piste.difficulty]) / 2;
 
     o.onLoading('Reconstruction du terrain 3D…');
     this.approximate = !okNear;
-    this.near = this.buildGrid(nearBox, this.q.nearCells, 6, (p) => demNear.sample(p));
-    this.far = this.buildGrid(farBox, 220, 50, (p) => demFar.sample(p) ?? demNear.sample(p));
+    this.near = this.buildGrid(nearBox, this.q.nearCells, 4, nearSample);
+    this.far = this.buildGrid(farBox, 240, 45, (p) => demFar.sample(p) ?? demNear.sample(p));
     if (!okNear) this.synthesizeTerrain(this.near);
     if (!okFar || !okNear) {
       if (!okFar) this.synthesizeTerrain(this.far);
@@ -256,6 +270,9 @@ export class SkiGame {
         this.flattenUnder(m);
       }
       this.roads = village.roads;
+      this.forests = village.forests;
+      this.pylons = village.pylons.map((p) => this.proj.toLocal(p));
+      this.buildForestMask(nb);
     } else this.buildingsStatus = 'indisponibles';
 
     // modules freestyle : le long de la piste + snowparks réels
@@ -387,7 +404,7 @@ export class SkiGame {
     r.setPixelRatio(this.q.pixelRatio);
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.toneMapping = THREE.ACESFilmicToneMapping;
-    r.toneMappingExposure = 0.92;
+    r.toneMappingExposure = 0.62;
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
     this.o.container.appendChild(r.domElement);
@@ -405,8 +422,8 @@ export class SkiGame {
     window.addEventListener('resize', resize);
     this.cleanup.push(() => window.removeEventListener('resize', resize));
 
-    this.scene.add(new THREE.HemisphereLight(0xd2e6f7, 0x5c6b7a, 0.35));
-    this.sun.intensity = 2.5;
+    this.scene.add(new THREE.HemisphereLight(0xd2e6f7, 0x5c6b7a, 0.3));
+    this.sun.intensity = 3.4;
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(this.q.shadowMap, this.q.shadowMap);
     const sc = this.sun.shadow.camera;
@@ -420,11 +437,12 @@ export class SkiGame {
     this.sun.shadow.bias = -0.0005;
     this.sun.shadow.normalBias = 0.5;
     this.scene.add(this.sun, this.sun.target);
-    this.scene.fog = new THREE.Fog(0xd3e2ee, 900, 8500);
+    this.scene.fog = new THREE.Fog(0xc9dbea, 2500, 22000);
   }
 
   private buildSky() {
     this.skyMesh = setupSky(this.scene, this.renderer, SUN_DIR);
+    this.scene.environmentIntensity = 0.55;
   }
 
   private snowNormalMap(): THREE.Texture {
@@ -482,8 +500,8 @@ export class SkiGame {
         uv[i * 2] = ix / (g.nx - 1);
         uv[i * 2 + 1] = 1 - iz / (g.nz - 1);
         if (uv1) {
-          uv1[i * 2] = x / 7;
-          uv1[i * 2 + 1] = z / 7;
+          uv1[i * 2] = x / 2.5;
+          uv1[i * 2 + 1] = z / 2.5;
         }
         const hx = g.h[Math.min(g.nx - 1, ix + 1) + iz * g.nx] - g.h[Math.max(0, ix - 1) + iz * g.nx];
         const hz = g.h[ix + Math.min(g.nz - 1, iz + 1) * g.nx] - g.h[ix + Math.max(0, iz - 1) * g.nx];
@@ -559,8 +577,21 @@ export class SkiGame {
       ctx.lineJoin = 'round';
       ctx.stroke();
     };
+    // sous-bois (forêts OSM) : neige ombragée, plus sombre — dessine la vraie lisière des forêts
+    if (this.forestMask) {
+      const fc = document.createElement('canvas');
+      fc.width = fc.height = this.forestMask.size;
+      const fctx = fc.getContext('2d')!;
+      fctx.drawImage(this.forestMask.canvas, 0, 0);
+      fctx.globalCompositeOperation = 'source-in';
+      fctx.fillStyle = '#93a3ab';
+      fctx.fillRect(0, 0, fc.width, fc.height);
+      ctx.globalAlpha = 0.75;
+      ctx.drawImage(fc, 0, 0, S, S);
+      ctx.globalAlpha = 1;
+    }
     // toutes les pistes : bord légèrement bleuté puis neige damée
-    for (const lp of this.pistes) for (const sg of lp.segs) drawLine(sg, lp.half * 2 + 3, 'rgba(110,145,185,0.28)');
+    for (const lp of this.pistes) for (const sg of lp.segs) drawLine(sg, lp.half * 2 + 3, 'rgba(120,150,185,0.18)');
     for (const lp of this.pistes) for (const sg of lp.segs) drawLine(sg, lp.half * 2, 'rgba(252,254,255,0.97)');
     const main: Pt[] = [];
     for (let i = 0; i < this.track.n; i++) main.push({ x: this.track.xs[i], z: this.track.zs[i] });
@@ -576,7 +607,7 @@ export class SkiGame {
             const dx = q.x - o.x, dz = q.z - o.z, l = Math.hypot(dx, dz) || 1;
             return { x: p.x + (dz / l) * off, z: p.z - (dx / l) * off };
           });
-          drawLine(pts, 0.3, 'rgba(165,185,212,0.16)');
+          drawLine(pts, 0.3, 'rgba(165,185,212,0.07)');
         }
       }
     // traces de skis sur la piste principale
@@ -587,7 +618,7 @@ export class SkiGame {
         const off = Math.sin(this.track.s[i] * freq + ph) * amp;
         return { x: p.x + a.tz * off, z: p.z - a.tx * off };
       });
-      drawLine(pts, 0.25, 'rgba(140,160,190,0.24)');
+      drawLine(pts, 0.25, 'rgba(140,160,190,0.14)');
     }
     // emprises bâties : sol tassé autour des chalets
     for (const b of this.buildings) {
@@ -624,7 +655,7 @@ export class SkiGame {
 
     const nearMesh = new THREE.Mesh(
       this.gridGeometry(this.near, 0, this.terrainColor, true),
-      new THREE.MeshStandardMaterial({ map: tex, normalMap: this.snowNormalMap(), normalScale: new THREE.Vector2(0.35, 0.35), vertexColors: true, roughness: 0.88, metalness: 0 }),
+      new THREE.MeshStandardMaterial({ map: tex, normalMap: this.snowNormalMap(), normalScale: new THREE.Vector2(0.12, 0.12), vertexColors: true, roughness: 0.88, metalness: 0 }),
     );
     nearMesh.receiveShadow = true;
     this.scene.add(nearMesh);
@@ -675,29 +706,97 @@ export class SkiGame {
   }
 
   // ================================================================== forêt
+  /** Masque raster des forêts OSM (multipolygones avec clairières). */
+  private buildForestMask(nb: { minX: number; minZ: number; maxX: number; maxZ: number }) {
+    if (!this.forests.length) return;
+    const size = 2048;
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d', { willReadFrequently: true })!;
+    const W = nb.maxX - nb.minX, D = nb.maxZ - nb.minZ;
+    ctx.fillStyle = '#fff';
+    for (const f of this.forests) {
+      ctx.beginPath();
+      for (const ring of [...f.outer, ...f.inner]) {
+        ring.forEach((p, i) => {
+          const l = this.proj.toLocal(p);
+          const X = ((l.x - nb.minX) / W) * size, Y = ((l.z - nb.minZ) / D) * size;
+          if (i) ctx.lineTo(X, Y);
+          else ctx.moveTo(X, Y);
+        });
+        ctx.closePath();
+      }
+      ctx.fill('evenodd');
+    }
+    // pas d'arbres sur les pistes ni sur les routes
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.lineCap = 'round';
+    const line = (pts: Pt[], w: number) => {
+      ctx.beginPath();
+      pts.forEach((p, i) => {
+        const X = ((p.x - nb.minX) / W) * size, Y = ((p.z - nb.minZ) / D) * size;
+        if (i) ctx.lineTo(X, Y);
+        else ctx.moveTo(X, Y);
+      });
+      ctx.lineWidth = (w / W) * size;
+      ctx.stroke();
+    };
+    for (const lp of this.pistes) for (const sg of lp.segs) line(sg, lp.half * 2 + 4);
+    for (const rd of this.roads) line(rd.line.map((p) => this.proj.toLocal(p)), roadWidth(rd.kind) + 4);
+    ctx.globalCompositeOperation = 'source-over';
+    this.forestMask = { data: ctx.getImageData(0, 0, size, size).data, size, canvas: c };
+  }
+
+  private inForest(x: number, z: number): boolean {
+    const m = this.forestMask;
+    if (!m) return false;
+    const g = this.near;
+    const W = (g.nx - 1) * g.cx, D = (g.nz - 1) * g.cz;
+    const X = Math.floor(((x - g.minX) / W) * m.size), Y = Math.floor(((z - g.minZ) / D) * m.size);
+    if (X < 0 || Y < 0 || X >= m.size || Y >= m.size) return false;
+    return m.data[(Y * m.size + X) * 4 + 3] > 128;
+  }
+
   private buildForest() {
     const g = this.near;
     const r = rng(1234);
     const W = (g.nx - 1) * g.cx, D = (g.nz - 1) * g.cz;
-    const target = Math.min(22000, Math.round(((W * D) / 1e6) * this.q.treeDensity));
+    const real = !!this.forestMask;
+    // avec les forêts OSM : forêt dense là où elle existe vraiment, quelques arbres isolés ailleurs
+    const cap = this.q.level === 'ultra' ? 40000 : this.q.level === 'haute' ? 26000 : 10000;
+    const target = Math.min(cap, Math.round(((W * D) / 1e6) * this.q.treeDensity * (real ? 2.5 : 1)));
     const pos: { x: number; z: number; y: number; s: number }[] = [];
     const avoid = new SpatialHash(20);
     for (const t of this.liftPaths) for (const q of resample(t.towers, 8)) avoid.insert(q.x, q.z, 9);
     let tries = 0;
-    while (pos.length < target && tries < target * 8) {
+    // 60 % des arbres dans un rayon de 500 m autour de la piste (là où on les voit de près)
+    const nearBudget = Math.round(target * 0.6);
+    while (pos.length < target && tries < target * 14) {
       tries++;
-      const x = g.minX + r() * W, z = g.minZ + r() * D;
+      let x: number, z: number;
+      if (pos.length < nearBudget && tries < target * 10) {
+        const a = this.track.at(r() * this.track.total);
+        const off = (r() * 2 - 1) * 500, along = (r() * 2 - 1) * 60;
+        x = a.x + a.tz * off + a.tx * along;
+        z = a.z - a.tx * off + a.tz * along;
+        if (x < g.minX || x > g.minX + W || z < g.minZ || z > g.minZ + D) continue;
+      } else {
+        x = g.minX + r() * W;
+        z = g.minZ + r() * D;
+      }
       const h = this.env.height(x, z);
       const tl = TREELINE + (fbm(x / 300, z / 300) - 0.5) * 160;
-      if (h > tl) continue;
-      if (r() > THREE.MathUtils.smoothstep(fbm(x / 160, z / 160), 0.32, 0.62)) continue;
+      if (h > tl + (real ? 80 : 0)) continue;
+      if (real) {
+        if (!this.inForest(x, z) && r() > 0.012) continue;
+      } else if (r() > THREE.MathUtils.smoothstep(fbm(x / 160, z / 160), 0.32, 0.62)) continue;
       const sl = Math.hypot(this.env.height(x + 2, z) - this.env.height(x - 2, z), this.env.height(x, z + 2) - this.env.height(x, z - 2)) / 4;
-      if (sl > 1.1) continue;
-      if (this.corridor.query(x, z, 5, this.tmp).length) continue;
+      if (sl > 1.3) continue;
+      if (this.corridor.query(x, z, 4, this.tmp).length) continue;
       if (avoid.query(x, z, 0, this.tmp).length) continue;
-      if (this.buildingHash.query(x, z, 6, this.tmp).length) continue;
-      const scale = 0.7 + r() * 0.8 * (1 - THREE.MathUtils.smoothstep(h, tl - 150, tl));
-      pos.push({ x, z, y: h, s: Math.max(0.45, scale) });
+      if (this.buildingHash.query(x, z, 5, this.tmp).length) continue;
+      const scale = 0.75 + r() * 0.85 * (1 - THREE.MathUtils.smoothstep(h, tl - 150, tl + 80));
+      pos.push({ x, z, y: h, s: Math.max(0.5, scale) });
     }
     // épicéa : trois étages de branches enneigées
     const layers = [
@@ -732,6 +831,9 @@ export class SkiGame {
       });
       this.trees.insert(p.x, p.z, 0.45 * p.s);
     });
+    let cover = 0;
+    if (this.forestMask) for (let i = 3; i < this.forestMask.data.length; i += 4 * 16) if (this.forestMask.data[i] > 128) cover++;
+    console.info('[pds3d] relief', this.demSource, '| forêts OSM', this.forests.length, '| couverture', this.forestMask ? ((cover * 16 * 100) / (this.forestMask.size ** 2)).toFixed(1) + ' %' : 'aucune', '| arbres', pos.length, '| bâtiments', this.buildings.length, '| pylônes OSM', this.pylons.length, '| modules', this.features.kickers.length + this.features.rails.length);
     for (const im of meshes) {
       im.castShadow = this.q.treeShadows;
       im.receiveShadow = this.q.level === 'ultra';
@@ -816,13 +918,13 @@ export class SkiGame {
       const g = new THREE.Group();
       const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.4 });
       for (const side of [-1, 1]) {
-        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.5, 5.5, 0.5), mat);
-        leg.position.set(side * this.halfWidth * 0.8, 2.75, 0);
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.35, 4.4, 0.35), mat);
+        leg.position.set(side * this.halfWidth * 0.55, 2.2, 0);
         leg.castShadow = true;
         g.add(leg);
       }
-      const banner = new THREE.Mesh(new THREE.BoxGeometry(this.halfWidth * 1.6 + 0.5, 1.3, 0.3), [mat, mat, mat, mat, new THREE.MeshStandardMaterial({ map: bannerTexture(text, color) }), new THREE.MeshStandardMaterial({ map: bannerTexture(text, color) })]);
-      banner.position.y = 5.5;
+      const banner = new THREE.Mesh(new THREE.BoxGeometry(this.halfWidth * 1.1 + 0.4, 0.8, 0.2), [mat, mat, mat, mat, new THREE.MeshStandardMaterial({ map: bannerTexture(text, color) }), new THREE.MeshStandardMaterial({ map: bannerTexture(text, color) })]);
+      banner.position.y = 4.4;
       banner.castShadow = true;
       g.add(banner);
       g.position.set(a.x, this.env.height(a.x, a.z), a.z);
@@ -845,7 +947,7 @@ export class SkiGame {
     for (const l of this.o.nearbyLifts) {
       const loc = l.line.map((p) => this.proj.toLocal(p));
       if (!inside(loc[0]) || !inside(loc[loc.length - 1])) continue;
-      const path = buildLiftPath(l.id, l.name, l.kind, loc, this.env.height);
+      const path = buildLiftPath(l.id, l.name, l.kind, loc, this.env.height, this.pylons);
       if (!path) continue;
       this.liftPaths.push(path);
 
@@ -1557,7 +1659,7 @@ export class SkiGame {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(this.sparkleCol, 3));
-    this.sparkles = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.05, vertexColors: true, toneMapped: false, transparent: true, depthWrite: false }));
+    this.sparkles = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.05, vertexColors: true, toneMapped: false, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
     this.sparkles.frustumCulled = false;
     this.scene.add(this.sparkles);
     for (let i = 0; i < N; i++) pos[i * 3 + 1] = -99999;

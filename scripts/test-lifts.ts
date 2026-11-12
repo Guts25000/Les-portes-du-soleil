@@ -36,3 +36,23 @@ sh.insert(24, 0, 15);
 assert.equal(sh.query(30, 0, 0).length, 1, 'élément à rayon détecté hors de sa cellule');
 assert.equal(sh.query(60, 0, 0).length, 0);
 console.log('✓ index spatial OK');
+
+// Pylônes réels : utilisés à la place du pas de 110 m
+import { buildLiftPath as blp, matchPylons } from '../game/lifts';
+const real = [{ x: 0.5, z: -300 }, { x: -1, z: -620 }, { x: 40, z: -400 }];
+assert.equal(matchPylons([{ x: 0, z: 0 }, { x: 0, z: -800 }], real).length, 2, 'pylône hors ligne ignoré');
+const pr = blp('l3', 'TS réel', 'telesiege', [{ x: 0, z: 0 }, { x: 0, z: -800 }], h, real)!;
+assert.equal(pr.towers.length, 4, 'gare + 2 pylônes réels + gare');
+assert.ok(Math.abs(pr.towers[1].z + 300) < 1e-9);
+// Anneaux de multipolygone
+import { assembleRings, parseVillage } from '../game/buildings';
+const rings = assembleRings([[[0, 0], [1, 0], [1, 1]], [[0, 1], [0, 0]], [[1, 1], [0, 1]]]);
+assert.equal(rings.length, 1);
+assert.equal(rings[0].length, 5, 'anneau fermé');
+const v = parseVillage([
+  { type: 'relation', id: 1, tags: { landuse: 'forest' }, members: [{ type: 'way', role: 'outer', geometry: [{ lat: 0, lon: 0 }, { lat: 0, lon: 1 }, { lat: 1, lon: 1 }, { lat: 0, lon: 0 }] }] },
+  { type: 'node', id: 2, lat: 1, lon: 2, tags: { aerialway: 'pylon' } },
+  { type: 'way', id: 3, tags: { building: 'house' }, geometry: [{ lat: 0, lon: 0 }, { lat: 0, lon: 1 }, { lat: 1, lon: 1 }, { lat: 0, lon: 0 }] },
+]);
+assert.ok(v.forests.length === 1 && v.pylons.length === 1 && v.buildings.length === 1);
+console.log('✓ pylônes réels & forêts OK');

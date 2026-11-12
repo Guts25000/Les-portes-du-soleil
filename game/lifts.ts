@@ -67,7 +67,7 @@ const HANG: Record<LiftKind, number> = {
   autre: 2.6,
 };
 
-export function buildLiftPath(id: string, name: string, kind: LiftKind, line: Pt[], height: (x: number, z: number) => number): LiftPath | null {
+export function buildLiftPath(id: string, name: string, kind: LiftKind, line: Pt[], height: (x: number, z: number) => number, realPylons: Pt[] = []): LiftPath | null {
   if (line.length < 2) return null;
   let pts2 = line.slice();
   // sens de montée : du point le plus bas au plus haut
@@ -84,8 +84,9 @@ export function buildLiftPath(id: string, name: string, kind: LiftKind, line: Pt
     pts = resample(pts2, 6).map((p) => ({ x: p.x, y: height(p.x, p.z), z: p.z }));
     towers = resample(pts2, 60).map((p) => ({ x: p.x, y: height(p.x, p.z), z: p.z }));
   } else {
-    // pylônes environ tous les 110 m ; le câble est tendu en ligne droite entre deux pylônes
-    const t = resample(pts2, 110);
+    // pylônes réels (OSM) s'ils existent le long de la ligne, sinon un tous les ~110 m
+    const near = matchPylons(pts2, realPylons);
+    const t = near.length ? [pts2[0], ...near, pts2[pts2.length - 1]] : resample(pts2, 110);
     towers = t.map((p) => ({ x: p.x, y: height(p.x, p.z), z: p.z }));
     const cable = towers.map((p, i) => ({ x: p.x, y: p.y + (i === 0 || i === towers.length - 1 ? 5 : towerH), z: p.z }));
     pts = [];
@@ -122,6 +123,20 @@ export function buildLiftPath(id: string, name: string, kind: LiftKind, line: Pt
     dir,
     ground,
   };
+}
+
+/** Pylônes situés à moins de 15 m de la ligne, triés de l'aval vers l'amont. */
+export function matchPylons(line: Pt[], pylons: Pt[]): Pt[] {
+  const a = line[0], b = line[line.length - 1];
+  const dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz) || 1;
+  const out: { p: Pt; t: number }[] = [];
+  for (const p of pylons) {
+    const t = ((p.x - a.x) * dx + (p.z - a.z) * dz) / (L * L);
+    if (t <= 0.02 || t >= 0.98) continue;
+    const d = Math.abs((p.x - a.x) * dz - (p.z - a.z) * dx) / L;
+    if (d < 15) out.push({ p, t });
+  }
+  return out.sort((u, v) => u.t - v.t).map((o) => o.p);
 }
 
 export function pointAt(p: LiftPath, d: number): V3 & { hx: number; hz: number } {

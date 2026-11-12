@@ -69,6 +69,19 @@ export default function App() {
     return () => clearInterval(t);
   }, []);
 
+  // Lien direct vers une descente : ?ski=Nom%20de%20piste (pratique pour tester / partager)
+  useEffect(() => {
+    if (!data) return;
+    const name = new URLSearchParams(window.location.search).get('ski');
+    if (!name) return;
+    const e = sectorEntries.find((x) => x.piste && x.official.name.toLowerCase() === name.toLowerCase());
+    const p = e?.piste ?? data.pistes.find((x) => x.name.toLowerCase() === name.toLowerCase());
+    if (p) {
+      setIntro(false);
+      setSkiing({ piste: p, targets: e ? medalTargets(p.lengthM, e.difficulty) : undefined });
+    }
+  }, [data, sectorEntries]);
+
   const select = useCallback((s: Selection, fly = false) => {
     setSelection(s);
     setRouteOpen(false);

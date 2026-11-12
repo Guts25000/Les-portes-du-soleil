@@ -28,7 +28,9 @@ Premier chargement des pistes : 10 à 60 s, puis cache 24 h dans le navigateur (
 
 | Élément | Source | Statut |
 |---|---|---|
-| Relief 3D | AWS Terrain Tiles (Terrarium : SRTM, EU-DEM…) | **réel** |
+| Relief 3D (carte) | AWS Terrain Tiles (Terrarium : SRTM, EU-DEM…) | **réel** |
+| Relief du simulateur | IGN RGE ALTI® (~4 m, Licence Ouverte Etalab) + AWS hors France | **réel** |
+| Forêts, pylônes, routes, bâtiments du simulateur | OpenStreetMap | **réel** |
 | Imagerie / fond topo | Esri World Imagery / OpenTopoMap | réel |
 | Pistes, remontées, restaurants, snowparks, points de vue | OpenStreetMap via Overpass (`lib/clientData.ts`) | **réel** (qualité = celle d'OSM) |
 | Altitudes départ/arrivée, dénivelé, pentes | calculées sur le MNT | calcul |

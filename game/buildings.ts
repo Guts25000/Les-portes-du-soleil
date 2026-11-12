@@ -26,11 +26,49 @@ export interface OsmRoad {
   kind: string;
 }
 
-/** Bâtiments + routes du secteur (une seule requête Overpass). */
-export async function fetchVillage(bbox: [number, number, number, number]): Promise<{ buildings: OsmBuilding[]; roads: OsmRoad[] }> {
+export interface OsmForest {
+  outer: LngLat[][];
+  inner: LngLat[][];
+}
+
+export interface Village {
+  buildings: OsmBuilding[];
+  roads: OsmRoad[];
+  forests: OsmForest[];
+  pylons: LngLat[];
+}
+
+/** Assemble des tronçons de ligne en anneaux fermés (multipolygones OSM). */
+export function assembleRings(parts: LngLat[][]): LngLat[][] {
+  const same = (a: LngLat, b: LngLat) => Math.abs(a[0] - b[0]) < 1e-7 && Math.abs(a[1] - b[1]) < 1e-7;
+  const rest = parts.filter((p) => p.length >= 2).map((p) => p.slice());
+  const rings: LngLat[][] = [];
+  while (rest.length) {
+    let ring = rest.shift()!;
+    let grown = true;
+    while (!same(ring[0], ring[ring.length - 1]) && grown) {
+      grown = false;
+      for (let i = 0; i < rest.length; i++) {
+        const p = rest[i];
+        const tail = ring[ring.length - 1];
+        if (same(tail, p[0])) ring = ring.concat(p.slice(1));
+        else if (same(tail, p[p.length - 1])) ring = ring.concat(p.slice(0, -1).reverse());
+        else continue;
+        rest.splice(i, 1);
+        grown = true;
+        break;
+      }
+    }
+    if (ring.length >= 4) rings.push(ring);
+  }
+  return rings;
+}
+
+/** Bâtiments, routes, forêts et pylônes du secteur (une seule requête Overpass). */
+export async function fetchVillage(bbox: [number, number, number, number]): Promise<Village> {
   const [w, s, e, n] = bbox;
   const b = `${s},${w},${n},${e}`;
-  const q = `[out:json][timeout:60];(way["building"](${b});way["aerialway"="station"](${b});way["highway"~"^(trunk|primary|secondary|tertiary|unclassified|residential|living_street|service)$"](${b}););out geom;`;
+  const q = `[out:json][timeout:90];(way["building"](${b});way["aerialway"="station"](${b});way["highway"~"^(trunk|primary|secondary|tertiary|unclassified|residential|living_street|service)$"](${b});way["landuse"="forest"](${b});way["natural"="wood"](${b});rel["landuse"="forest"](${b});rel["natural"="wood"](${b});node["aerialway"="pylon"](${b}););out geom;`;
   let lastErr: unknown = null;
   for (const url of OVERPASS) {
     try {
@@ -41,22 +79,50 @@ export async function fetchVillage(bbox: [number, number, number, number]): Prom
         signal: AbortSignal.timeout(60_000),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const j = (await r.json()) as { elements: { type: string; id: number; geometry?: { lat: number; lon: number }[]; tags?: Record<string, string> }[] };
-      const buildings: OsmBuilding[] = [];
-      const roads: OsmRoad[] = [];
-      for (const el of j.elements) {
-        if (el.type !== 'way' || !el.geometry || el.geometry.length < 2) continue;
-        const line = el.geometry.map((g) => [g.lon, g.lat] as LngLat);
-        const t = el.tags ?? {};
-        if (t.highway) roads.push({ id: el.id, line, kind: t.highway });
-        else if (line.length >= 4) buildings.push({ id: el.id, ring: line, tags: t });
-      }
-      return { buildings, roads };
+      type G = { lat: number; lon: number }[];
+      const j = (await r.json()) as {
+        elements: { type: string; id: number; lat?: number; lon?: number; geometry?: G; tags?: Record<string, string>; members?: { type: string; role: string; geometry?: G }[] }[];
+      };
+      return parseVillage(j.elements);
     } catch (e) {
       lastErr = e;
     }
   }
   throw lastErr ?? new Error('Overpass indisponible');
+}
+
+type RawEl = { type: string; id: number; lat?: number; lon?: number; geometry?: { lat: number; lon: number }[]; tags?: Record<string, string>; members?: { type: string; role: string; geometry?: { lat: number; lon: number }[] }[] };
+
+export function parseVillage(elements: RawEl[]): Village {
+  const buildings: OsmBuilding[] = [];
+  const roads: OsmRoad[] = [];
+  const forests: OsmForest[] = [];
+  const pylons: LngLat[] = [];
+  const toLine = (g: { lat: number; lon: number }[]) => g.map((p) => [p.lon, p.lat] as LngLat);
+  for (const el of elements) {
+    const t = el.tags ?? {};
+    const isForest = t.landuse === 'forest' || t.natural === 'wood';
+    if (el.type === 'node') {
+      if (t.aerialway === 'pylon' && el.lat != null && el.lon != null) pylons.push([el.lon, el.lat]);
+      continue;
+    }
+    if (el.type === 'relation') {
+      if (!isForest || !el.members) continue;
+      const outer = assembleRings(el.members.filter((m) => m.type === 'way' && m.role !== 'inner' && m.geometry).map((m) => toLine(m.geometry!)));
+      const inner = assembleRings(el.members.filter((m) => m.type === 'way' && m.role === 'inner' && m.geometry).map((m) => toLine(m.geometry!)));
+      if (outer.length) forests.push({ outer, inner });
+      continue;
+    }
+    if (el.type !== 'way' || !el.geometry || el.geometry.length < 2) continue;
+    const line = toLine(el.geometry);
+    if (isForest) {
+      if (line.length >= 4) forests.push({ outer: [line], inner: [] });
+    } else if (t.highway) roads.push({ id: el.id, line, kind: t.highway });
+    else if (t.building || t.aerialway === 'station') {
+      if (line.length >= 4) buildings.push({ id: el.id, ring: line, tags: t });
+    }
+  }
+  return { buildings, roads, forests, pylons };
 }
 
 /** Largeur (m) d'une route selon son type OSM. */
