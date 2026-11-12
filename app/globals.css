@@ -1,0 +1,83 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: #0b0d10;
+  color: #f5f8fb;
+  font-family: var(--font-sans);
+  overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer components {
+  .glass {
+    @apply bg-anthracite-900/60 backdrop-blur-xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.45)];
+  }
+  .glass-light {
+    @apply bg-white/[0.06] backdrop-blur-md border border-white/10;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium tracking-wide;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-all duration-200 active:scale-[0.97];
+  }
+  .btn-ghost {
+    @apply btn bg-white/5 hover:bg-white/10 border border-white/10 text-snow;
+  }
+  .btn-primary {
+    @apply btn bg-electric-500 hover:bg-electric-400 text-white shadow-[0_0_24px_rgba(31,107,255,0.45)];
+  }
+  .label {
+    @apply text-[10px] uppercase tracking-[0.14em] text-glacier-200/60 font-semibold;
+  }
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+  }
+}
+
+/* MapLibre : contrôles et popups aux couleurs du site */
+.maplibregl-ctrl-group {
+  background: rgba(19, 22, 26, 0.7) !important;
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px !important;
+  overflow: hidden;
+}
+.maplibregl-ctrl-group button + button { border-top: 1px solid rgba(255, 255, 255, 0.08) !important; }
+.maplibregl-ctrl-group button .maplibregl-ctrl-icon { filter: invert(1) brightness(1.4); }
+.maplibregl-ctrl-attrib {
+  background: rgba(11, 13, 16, 0.65) !important;
+  color: rgba(255, 255, 255, 0.6) !important;
+  font-size: 10px;
+}
+.maplibregl-ctrl-attrib a { color: rgba(169, 214, 234, 0.85) !important; }
+.maplibregl-ctrl-attrib-button { filter: invert(1); }
+
+.station-marker {
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+.station-marker:hover { transform: translateY(-2px) scale(1.04); }
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up { animation: fadeUp 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+
+@keyframes pulseRing {
+  0% { box-shadow: 0 0 0 0 rgba(61, 139, 255, 0.55); }
+  70% { box-shadow: 0 0 0 14px rgba(61, 139, 255, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(61, 139, 255, 0); }
+}
+.pulse-ring { animation: pulseRing 2s infinite; }

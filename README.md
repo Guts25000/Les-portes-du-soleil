@@ -1,0 +1,99 @@
+# Les Portes du Soleil — 3D Ski Experience
+
+Site Next.js / TypeScript : carte 3D du domaine des Portes du Soleil sur le relief réel, pistes et remontées issues d'OpenStreetMap, météo par secteur, calcul d'itinéraire et **Ski Simulator** qui reconstruit la descente à partir du tracé GPS et du modèle numérique de terrain.
+
+## Mettre en ligne sur GitHub Pages (sans installer Node)
+
+1. Crée un compte sur https://github.com puis un nouveau dépôt **public** (ex. `portes-du-soleil-3d`).
+2. Sur la page du dépôt : **Add file → Upload files**, glisse **tout le contenu** du dossier (y compris le dossier `.github` — sur Mac, Cmd+Maj+. affiche les fichiers cachés), puis **Commit changes**.
+3. **Settings → Pages → Source : GitHub Actions**.
+4. Onglet **Actions** : le déploiement démarre (relance-le avec « Run workflow » s'il a démarré avant l'étape 3). Environ 2-3 min.
+5. Le site est en ligne sur `https://<ton-pseudo>.github.io/<nom-du-depot>/`.
+
+Chaque nouvel envoi de fichiers republie automatiquement le site.
+
+## Développer en local (optionnel, nécessite Node 18.17+)
+
+```bash
+npm install
+npm run dev        # http://localhost:3000
+npm run test:libs  # tests : parsing OSM, itinéraires, météo, physique du skieur
+npm run build      # génère le site statique dans out/
+```
+
+Site 100 % statique : le navigateur interroge directement Overpass (OpenStreetMap) et Open-Meteo.
+Premier chargement des pistes : 10 à 60 s, puis cache 24 h dans le navigateur (IndexedDB).
+
+## D'où viennent les données
+
+| Élément | Source | Statut |
+|---|---|---|
+| Relief 3D | AWS Terrain Tiles (Terrarium : SRTM, EU-DEM…) | **réel** |
+| Imagerie / fond topo | Esri World Imagery / OpenTopoMap | réel |
+| Pistes, remontées, restaurants, snowparks, points de vue | OpenStreetMap via Overpass (`lib/clientData.ts`) | **réel** (qualité = celle d'OSM) |
+| Altitudes départ/arrivée, dénivelé, pentes | calculées sur le MNT | calcul |
+| Météo, neige au sol, chutes 24/72 h, iso 0 °C, visibilité | Open-Meteo (`lib/clientData.ts`) | **modèle**, affiché comme tel |
+| Temps de descente / de montée | estimations (vitesse type) sauf tag OSM `aerialway:duration` | estimation, signalée |
+| Ouverture pistes/remontées, risque d'avalanche | `lib/live.ts` | **non branché** → l'interface affiche « Non disponible » |
+| Webcams | `data/webcams.ts` + tag OSM `contact:webcam` | à compléter avec les flux officiels |
+
+Aucune donnée « en direct » n'est inventée : tant qu'un flux officiel n'est pas branché, l'interface le dit.
+
+## Fonctionnalités
+
+**Carte (phase 1)**
+- MapLibre GL avec terrain 3D, ciel, ombrage du relief, bascule 3D/2D et satellite/topo.
+- Pistes colorées selon la difficulté OSM (`novice`→verte, `easy`→bleue, `intermediate`→rouge, `advanced/expert`→noire, `freeride`→itinéraire en pointillés).
+- Remontées, gares, 12 stations (marqueurs FR/CH), noms de pistes le long des tracés.
+- Animation d'introduction, bouton « Explorer le domaine ».
+
+**Points interactifs et conditions (phase 2)**
+- Fiche piste : longueur, dénivelé, altitudes, pente moyenne/max, profil altimétrique, passages raides (> 45 %), temps moyen, neige du secteur, état (si flux), bouton **SKIER CETTE PISTE**.
+- Fiche remontée : type, altitudes, longueur, temps de montée, débit, horaires OSM.
+- Restaurants d'altitude (= à moins de 200 m d'une piste ou remontée), bars, snowparks, points de vue, refuges, zones débutants, itinéraires hors-piste (information), espaces de repos.
+- Panneau latéral rétractable : météo par secteur, vent, rafales, visibilité, neige au sol, chutes récentes, filtres d'affichage.
+- Recherche (stations, pistes, remontées, POI, webcams) avec déplacement automatique de la caméra.
+
+**Ski Simulator (phase 3)** — `game/`
+- Le parcours = tracé OSM de la piste, rééchantillonné et orienté vers l'aval.
+- Le terrain = MNT réel haute résolution autour de la piste (zoom 13–14, ~7 m) + MNT basse résolution sur 4,5 km pour le panorama.
+- Piste damée et pistes voisines peintes sur la neige, balises de couleur, filets sur l'extérieur des virages pentus, remontées voisines avec pylônes et sièges animés, forêt sous la limite des arbres (~1 950 m), autres skieurs, neige qui tombe, gerbes de neige, ombres, effet de vitesse.
+- Physique : gravité projetée sur la pente, accroche des carres, frottements neige/air, position aéro, chasse-neige, neige profonde hors-piste, sauts, rotations 360/720, grabs, chutes (arbres, filets, skieurs).
+- HUD : chrono, vitesse, distance parcourue / restante, altitude, score, figures. Écran de résultats avec record personnel et classement.
+- Commandes : ←/→ ou A/D, ↑/W, ↓/S, Espace, Shift, C (caméra 1re/3e personne), R, Échap. Boutons tactiles sur mobile.
+- Si le MNT est indisponible, un terrain approximatif est reconstruit **et signalé** à l'écran et dans les résultats.
+
+**Itinéraires (phase 4, première version)** — `lib/routing.ts`
+- Graphe orienté : pistes vers l'aval (sens vérifié sur le MNT), remontées vers l'amont, liaisons à pied courtes.
+- Dijkstra sur le temps estimé ; option « éviter les noires » ; les remontées fermées sont exclues dès que le flux d'état est branché.
+
+**Classements**
+- Records stockés dans le navigateur ; classement en ligne si Supabase est configuré (`.env.local` + `supabase/schema.sql`).
+
+## Brancher les données officielles
+
+- **Ouverture pistes/remontées** : exposer un JSON au format `LiveStatus` (`lib/live.ts`) et renseigner `NEXT_PUBLIC_LIVE_STATUS_URL`. Côté exploitant : Lumiplan, Skidata, ou Infosnow (côté suisse).
+- **Avalanches** : API Météo-France (BRA, massif du Chablais, clé gratuite) et SLF pour la Suisse → `NEXT_PUBLIC_AVALANCHE_URL`.
+- **Webcams** : ajouter les entrées vérifiées dans `data/webcams.ts` (page officielle + URL d'intégration autorisée).
+
+## Limites connues
+
+- L'emprise de chargement (`DOMAIN_BBOX`) inclut quelques pistes voisines hors Portes du Soleil (ex. Roc d'Enfer). Pour les exclure, remplacer la bbox par le polygone du domaine.
+- Les coordonnées des stations (`lib/stations.ts`) sont des centres de village approximatifs (étiquettes, météo, secteur).
+- La complétude des pistes dépend d'OSM ; les pistes découpées en morceaux sont chaînées automatiquement (tolérance 40 m).
+- Tuiles Esri/OpenTopoMap/demotiles : adaptées à un prototype. En production, passer sur un fournisseur avec clé (MapTiler, IGN Géoplateforme, swisstopo) et respecter leurs conditions.
+
+## Structure
+
+```
+app/            page Next.js (export statique)
+.github/        workflow de déploiement GitHub Pages
+components/     App, MapView, Sidebar, SearchBar, DetailCard, RoutePlanner, SkiSimulator
+game/           SkiGame (Three.js), physics (pure, testée), track (géométrie du parcours)
+lib/            types, géo, parsing OSM, MNT, itinéraires, estimations, météo, scores, flux live
+data/           webcams
+supabase/       schéma SQL (scores, profils)
+scripts/        tests sans réseau
+```
+
+Attributions : © contributeurs OpenStreetMap (ODbL) · AWS Terrain Tiles / Mapzen · Esri · OpenTopoMap (CC-BY-SA) · Open-Meteo (CC BY 4.0).
