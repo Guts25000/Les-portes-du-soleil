@@ -20,7 +20,7 @@ interface Props {
 
 function nearby(piste: Piste, domain: DomainData) {
   const [w, s, e, n] = bboxOf(piste.line);
-  const m = 0.035;
+  const m = 0.04;
   const inBox = (pts: [number, number][]) => pts.some(([x, y]) => x > w - m && x < e + m && y > s - m && y < n + m);
   return {
     pistes: domain.pistes.filter((p) => p.segments.some((seg) => inBox(seg))),
@@ -39,6 +39,7 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
   const [prevBest, setPrevBest] = useState<RunResult | null>(null);
   const [board, setBoard] = useState<{ online: boolean; rows: RunResult[] } | null>(null);
   const [approx, setApprox] = useState(false);
+  const [noBuildings, setNoBuildings] = useState(false);
   const [player, setPlayer] = useState(getPlayerName());
   const exitRef = useRef(onExit);
   exitRef.current = onExit;
@@ -82,7 +83,10 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
     });
     game.current = g;
     g.init()
-      .then(() => setApprox(g.approximate))
+      .then(() => {
+        setApprox(g.approximate);
+        setNoBuildings(g.buildingsStatus === 'indisponibles');
+      })
       .catch((e) => setError(String(e)));
     const esc = (e: KeyboardEvent) => e.key === 'Escape' && exitRef.current();
     window.addEventListener('keydown', esc);
@@ -117,6 +121,11 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
     setBoard(null);
     game.current?.reset();
   };
+  const goFree = () => {
+    setResult(null);
+    game.current?.startFree();
+  };
+  const free = hud?.phase === 'free';
 
   const speed = hud?.speedKmh ?? 0;
   const progress = hud ? hud.dist / Math.max(1, hud.dist + hud.remaining) : 0;
@@ -144,7 +153,13 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
             <div className="text-[10px] text-glacier-200/60">{piste.sector} · {DIFF_LABEL[piste.difficulty]}</div>
           </div>
         </div>
-        {hud && hud.phase !== 'loading' && (
+        {free && (
+          <div className="glass rounded-2xl px-4 py-2 text-right">
+            <div className="text-[13px] font-bold">🗺️ Mode libre</div>
+            <div className="text-[10px] text-glacier-200/60">Prenez les remontées (E) · R : revenir au départ</div>
+          </div>
+        )}
+        {hud && hud.phase !== 'loading' && !free && (
           <div className="glass rounded-2xl px-4 py-2 text-right">
             <div className="font-mono text-2xl font-bold tabular-nums">{fmtTime(hud.time)}</div>
             <div className="text-[10px] text-glacier-200/60">{best ? `Record : ${fmtTime(best.timeS)}` : 'Pas encore de record'}</div>
@@ -167,20 +182,65 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
         </div>
       )}
 
+      {noBuildings && hud?.phase !== 'loading' && (
+        <div className="pointer-events-none absolute left-3 top-20 rounded-lg bg-black/40 px-2 py-1 text-[10px] text-glacier-100/70">
+          Bâtiments OSM indisponibles (serveur Overpass saturé)
+        </div>
+      )}
+
       {/* HUD bas */}
       {hud && hud.phase !== 'loading' && !result && (
         <div className="pointer-events-none absolute bottom-0 left-0 right-0 p-3 md:p-5">
-          <div className="mx-auto mb-3 h-1.5 max-w-xl overflow-hidden rounded-full bg-white/15">
-            <div className="h-full rounded-full bg-gradient-to-r from-glacier-300 to-electric-400" style={{ width: `${progress * 100}%` }} />
-          </div>
+          {hud.riding ? (
+            <div className="mx-auto mb-3 max-w-md rounded-2xl bg-black/40 px-4 py-2.5 backdrop-blur">
+              <div className="flex items-center justify-between text-[13px]">
+                <span className="font-bold">🚡 {hud.riding.kind} {hud.riding.name}</span>
+                <span className="tabular-nums text-glacier-100/80">{Math.ceil(hud.riding.remainingS)} s</span>
+              </div>
+              <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/15">
+                <div className="h-full rounded-full bg-white" style={{ width: `${hud.riding.progress * 100}%` }} />
+              </div>
+              <div className="mt-1 text-[10px] text-glacier-200/60">Maintenez Espace (ou ⏩) pour accélérer</div>
+            </div>
+          ) : (
+            <div className="mb-2 flex flex-col items-center gap-2">
+              {hud.liftPrompt && (
+                <button
+                  className="pointer-events-auto animate-fade-up rounded-2xl bg-electric-500 px-4 py-2 text-[13px] font-bold shadow-[0_0_24px_rgba(31,107,255,0.6)]"
+                  onClick={() => game.current?.board()}
+                >
+                  {hud.liftPrompt}
+                </button>
+              )}
+              <div className="rounded-full bg-black/35 px-3 py-1 text-[12px] backdrop-blur">
+                {hud.currentPiste ? (
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-full border border-white/70" style={{ background: DIFF_COLOR[hud.currentPiste.difficulty] }} />
+                    {hud.currentPiste.name}
+                  </span>
+                ) : (
+                  <span className="text-amber-200">Hors piste</span>
+                )}
+              </div>
+            </div>
+          )}
+          {!free && !hud.riding && (
+            <div className="mx-auto mb-3 h-1.5 max-w-xl overflow-hidden rounded-full bg-white/15">
+              <div className="h-full rounded-full bg-gradient-to-r from-glacier-300 to-electric-400" style={{ width: `${progress * 100}%` }} />
+            </div>
+          )}
           <div className="mx-auto flex max-w-3xl items-end justify-between gap-2">
             <div className="glass rounded-2xl px-4 py-2">
               <div className="font-mono text-4xl font-black tabular-nums md:text-5xl">{Math.round(speed)}</div>
               <div className="label">km/h</div>
             </div>
             <div className="glass hidden gap-5 rounded-2xl px-4 py-2 sm:flex">
-              <div><div className="label">Parcouru</div><div className="font-semibold tabular-nums">{Math.round(hud.dist)} m</div></div>
-              <div><div className="label">Restant</div><div className="font-semibold tabular-nums">{Math.round(hud.remaining)} m</div></div>
+              {!free && (
+                <>
+                  <div><div className="label">Parcouru</div><div className="font-semibold tabular-nums">{Math.round(hud.dist)} m</div></div>
+                  <div><div className="label">Restant</div><div className="font-semibold tabular-nums">{Math.round(hud.remaining)} m</div></div>
+                </>
+              )}
               <div><div className="label">Altitude</div><div className="font-semibold tabular-nums">{Math.round(hud.altitude)} m</div></div>
               <div><div className="label">Figures</div><div className="font-semibold tabular-nums">{hud.tricks}</div></div>
             </div>
@@ -190,7 +250,7 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
             </div>
           </div>
           <div className="mx-auto mt-2 hidden max-w-3xl text-center text-[10px] text-white/50 md:block">
-            ←/→ ou A/D tourner · ↑/W pousser · ↓/S freiner · Espace sauter (+ ←/→ en l'air : rotation) · Shift position aéro / grab · C caméra · R recommencer · Échap quitter
+            ←/→ tourner · ↑ pousser · ↓ freiner · Espace sauter (+ ←/→ en l'air : rotation) · Shift aéro / grab · E remontée · C caméra · M carte · R recommencer · Échap quitter
           </div>
         </div>
       )}
@@ -218,11 +278,15 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
             {touchBtn('up', '▲', 'h-14 w-14')}
             {touchBtn('jump', '⤒', 'h-14 w-14')}
             {touchBtn('down', '▼', 'h-14 w-14')}
+            {hud.riding && touchBtn('jump', '⏩', 'col-span-2 h-12 w-full text-base')}
           </div>
         </div>
       )}
-      {!result && hud && hud.phase === 'running' && (
-        <div className="absolute right-3 top-20 flex flex-col gap-2">
+      {!result && hud && (hud.phase === 'running' || hud.phase === 'free' || hud.phase === 'countdown') && (
+        <div className="absolute right-3 top-28 flex flex-col gap-2">
+          {!free && (
+            <button className="glass rounded-xl px-3 py-1.5 text-[12px]" onClick={goFree}>🗺️ Mode libre</button>
+          )}
           <button className="glass rounded-xl px-3 py-1.5 text-[12px]" onClick={() => game.current?.toggleCamera()}>🎥 Caméra</button>
           <button className="glass rounded-xl px-3 py-1.5 text-[12px]" onClick={() => game.current?.unstuck()}>↺ Bloqué ?</button>
         </div>
@@ -236,7 +300,7 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
             <div className="text-lg font-semibold">{piste.name}</div>
             <div className="mt-1 text-sm text-glacier-200/70">{error ? `Erreur : ${error}` : loading}</div>
             <p className="mt-4 text-[11px] leading-relaxed text-glacier-200/40">
-              Parcours : tracé GPS OpenStreetMap · Relief : MNT réel. Forêt, balisage, filets et autres skieurs sont générés pour l'ambiance.
+              Parcours, remontées et bâtiments : OpenStreetMap · Relief : MNT réel. Forêt, jalons, panneaux, filets et autres skieurs sont générés pour l'ambiance.
             </p>
             {error && <button className="btn-ghost mt-4" onClick={onExit}>Retour à la carte</button>}
           </div>
@@ -314,7 +378,8 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
               </ol>
             </div>
 
-            <div className="mt-5 flex gap-2">
+            <button className="btn-ghost mt-4 w-full !border-electric-400/40" onClick={goFree}>🗺️ Continuer en mode libre (remontées, autres pistes)</button>
+            <div className="mt-2 flex gap-2">
               <button className="btn-primary flex-1" onClick={restart}>↻ Recommencer</button>
               <button className="btn-ghost flex-1" onClick={onExit}>Choisir une autre piste</button>
             </div>

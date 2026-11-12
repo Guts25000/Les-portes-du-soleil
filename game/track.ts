@@ -87,6 +87,7 @@ export class SpatialHash {
   readonly xs: number[] = [];
   readonly zs: number[] = [];
   readonly rs: number[] = [];
+  private maxR = 0;
   constructor(private cell: number) {}
   private key(ix: number, iz: number) {
     return ix * 73856093 ^ iz * 19349663;
@@ -96,6 +97,7 @@ export class SpatialHash {
     this.xs.push(x);
     this.zs.push(z);
     this.rs.push(r);
+    if (r > this.maxR) this.maxR = r;
     const k = this.key(Math.floor(x / this.cell), Math.floor(z / this.cell));
     let arr = this.cells.get(k);
     if (!arr) this.cells.set(k, (arr = []));
@@ -105,7 +107,8 @@ export class SpatialHash {
   /** Identifiants des points à moins de `radius` (+ leur rayon propre). */
   query(x: number, z: number, radius: number, out: number[] = []): number[] {
     out.length = 0;
-    const r = Math.ceil(radius / this.cell);
+    // inclut les cellules voisines quand les éléments ont eux-mêmes un rayon
+    const r = Math.ceil((radius + this.maxR) / this.cell);
     const cx = Math.floor(x / this.cell), cz = Math.floor(z / this.cell);
     for (let dx = -r; dx <= r; dx++)
       for (let dz = -r; dz <= r; dz++) {

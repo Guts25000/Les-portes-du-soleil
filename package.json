@@ -8,7 +8,7 @@
     "start": "npx serve out",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test:libs": "tsx scripts/test-libs.ts && tsx scripts/test-physics.ts && tsx scripts/test-sector.ts"
+    "test:libs": "tsx scripts/test-libs.ts && tsx scripts/test-physics.ts && tsx scripts/test-sector.ts && tsx scripts/test-buildings.ts && tsx scripts/test-lifts.ts"
   },
   "dependencies": {
     "maplibre-gl": "^4.7.1",

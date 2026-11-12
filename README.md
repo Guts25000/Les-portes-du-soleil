@@ -55,13 +55,15 @@ Aucune donnée « en direct » n'est inventée : tant qu'un flux officiel n'est 
 - Recherche (stations, pistes, remontées, POI, webcams) avec déplacement automatique de la caméra.
 
 **Ski Simulator (phase 3)** — `game/`
-- Le parcours = tracé OSM de la piste, rééchantillonné et orienté vers l'aval.
-- Le terrain = MNT réel haute résolution autour de la piste (zoom 13–14, ~7 m) + MNT basse résolution sur 4,5 km pour le panorama.
-- Piste damée et pistes voisines peintes sur la neige, balises de couleur, filets sur l'extérieur des virages pentus, remontées voisines avec pylônes et sièges animés, forêt sous la limite des arbres (~1 950 m), autres skieurs, neige qui tombe, gerbes de neige, ombres, effet de vitesse.
-- Physique : gravité projetée sur la pente, accroche des carres, frottements neige/air, position aéro, chasse-neige, neige profonde hors-piste, sauts, rotations 360/720, grabs, chutes (arbres, filets, skieurs).
-- HUD : chrono, vitesse, distance parcourue / restante, altitude, score, figures. Écran de résultats avec record personnel et classement.
-- Commandes : ←/→ ou A/D, ↑/W, ↓/S, Espace, Shift, C (caméra 1re/3e personne), R, Échap. Boutons tactiles sur mobile.
-- Si le MNT est indisponible, un terrain approximatif est reconstruit **et signalé** à l'écran et dans les résultats.
+- Monde ouvert : la piste choisie + 1,3 km autour en relief détaillé (MNT zoom 13–14), panorama réel sur 5,5 km.
+- Toutes les pistes OSM de la zone sont damées et balisées : jalons à la couleur de la piste (pointe orange côté droit), panneau avec le nom au départ de chaque piste, filets et panneaux « danger » dans les virages pentus, arches DÉPART / ARRIVÉE.
+- Bâtiments réels : emprises OpenStreetMap ; chalets à toit à deux pans enneigé (bois sur soubassement en pierre, fenêtres), grands bâtiments extrudés ; collisions.
+- Remontées jouables (mode libre) : gares aval/amont, pylônes, câbles, sièges et cabines animés ; touche E pour embarquer, Espace pour accélérer, débarquement en haut. Téléskis tractés au sol.
+- Mode chrono (piste choisie) puis « mode libre » pour enchaîner pistes et remontées. Mini-carte (M), nom de la piste sous les skis, hors-piste signalé.
+- Physique : gravité projetée sur la pente, carving, position aéro, chasse-neige, neige profonde, sauts, 360/720, grabs, chutes (arbres, chalets, pylônes, filets, skieurs).
+- Graphismes : neige avec micro-relief (normal map), soleil et halo dans le ciel, épicéas enneigés à 3 étages, ombres, particules, effet de vitesse.
+- Commandes : ←/→, ↑, ↓, Espace, Shift, E, C (caméra), M (carte), R, Échap ; boutons tactiles sur mobile.
+- Si le MNT est indisponible, un terrain approximatif est reconstruit **et signalé**.
 
 **Championnat Pleney · Nyon · Les Gets** — `data/morzineLesGets.ts`, `lib/sectorMatch.ts`, `lib/championship.ts`
 - Les 74 pistes du forfait Morzine – Les Gets (Pleney, Nyon, Chamossière, Chavannes, Ranfoilly-Nauchets, Rosta-Perrières, Mont-Chéry), d'après les pages officielles d'ouverture des pistes (portesdusoleil.com).

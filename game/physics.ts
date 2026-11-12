@@ -24,6 +24,12 @@ export interface Env {
   halfWidth: number;
   /** Retourne true si un obstacle (arbre, filet, skieur) est touché à cette position. */
   collide: (x: number, z: number, yAboveGround: number) => string | null;
+  /** Mode libre : pas de progression ni de retour automatique sur le tracé. */
+  freeRoam?: boolean;
+  /** Vrai si la position est sur une piste damée (n'importe laquelle). */
+  onPiste?: (x: number, z: number) => boolean;
+  /** Limites du monde chargé. */
+  bounds?: { minX: number; maxX: number; minZ: number; maxZ: number };
 }
 
 export interface Skier {
@@ -52,7 +58,8 @@ export type GameEvent =
   | { type: 'trick'; name: string; points: number }
   | { type: 'crash'; reason: string }
   | { type: 'respawn' }
-  | { type: 'land'; air: number };
+  | { type: 'land'; air: number }
+  | { type: 'bounds' };
 
 export function createSkier(track: Track, height: Env['height']): Skier {
   const a = track.at(2);
@@ -226,11 +233,29 @@ export function step(k: Skier, input: Input, env: Env, dt: number, events: GameE
     }
   }
 
+  // --- Limites du monde
+  if (env.bounds) {
+    const b = env.bounds, m = 30;
+    let hit = false;
+    if (k.x < b.minX + m) { k.x = b.minX + m; k.vx = Math.abs(k.vx) * 0.2; hit = true; }
+    if (k.x > b.maxX - m) { k.x = b.maxX - m; k.vx = -Math.abs(k.vx) * 0.2; hit = true; }
+    if (k.z < b.minZ + m) { k.z = b.minZ + m; k.vz = Math.abs(k.vz) * 0.2; hit = true; }
+    if (k.z > b.maxZ - m) { k.z = b.maxZ - m; k.vz = -Math.abs(k.vz) * 0.2; hit = true; }
+    if (hit) {
+      k.y = Math.max(k.y, env.height(k.x, k.z));
+      events.push({ type: 'bounds' });
+    }
+  }
+
   // --- Progression sur le tracé
+  if (env.freeRoam) {
+    k.offPiste = env.onPiste ? !env.onPiste(k.x, k.z) : false;
+    return;
+  }
   const pr = env.track.nearest(k.x, k.z, k.trackIdx);
   k.trackIdx = pr.i;
   k.lateral = pr.lateral;
-  k.offPiste = pr.dist > env.halfWidth;
+  k.offPiste = env.onPiste ? !env.onPiste(k.x, k.z) && pr.dist > env.halfWidth : pr.dist > env.halfWidth;
   if (pr.s > k.s) k.s = pr.s;
   if (pr.dist > env.halfWidth + 140) {
     respawnOnTrack(k, env, pr.s);
