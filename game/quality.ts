@@ -46,9 +46,9 @@ export function qualitySettings(level: QualityLevel): QualitySettings {
     case 'basse':
       return { level, pixelRatio: Math.min(dpr, 1), shadowMap: 1024, shadowRange: 60, postfx: false, bloom: false, msaa: 0, treeDensity: 600, treeShadows: false, terrainTex: 2048, nearCells: 380, sparkles: 0, buildingShadows: false };
     case 'haute':
-      return { level, pixelRatio: Math.min(dpr, 1.5), shadowMap: 2048, shadowRange: 90, postfx: true, bloom: true, msaa: 4, treeDensity: 1100, treeShadows: true, terrainTex: 4096, nearCells: 520, sparkles: 1500, buildingShadows: true };
+      return { level, pixelRatio: Math.min(dpr, 1.25), shadowMap: 2048, shadowRange: 90, postfx: true, bloom: true, msaa: 4, treeDensity: 1100, treeShadows: true, terrainTex: 4096, nearCells: 520, sparkles: 1500, buildingShadows: true };
     case 'ultra':
-      return { level, pixelRatio: Math.min(dpr, 2), shadowMap: 4096, shadowRange: 120, postfx: true, bloom: true, msaa: 4, treeDensity: 1500, treeShadows: true, terrainTex: 4096, nearCells: 640, sparkles: 2500, buildingShadows: true };
+      return { level, pixelRatio: Math.min(dpr, 1.75), shadowMap: 2048, shadowRange: 110, postfx: true, bloom: true, msaa: 4, treeDensity: 1500, treeShadows: true, terrainTex: 4096, nearCells: 640, sparkles: 2500, buildingShadows: true };
   }
 }
 

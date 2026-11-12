@@ -23,11 +23,12 @@ interface Props {
 function nearby(piste: Piste, domain: DomainData) {
   const [w, s, e, n] = bboxOf(piste.line);
   const m = 0.04;
-  const inBox = (pts: [number, number][]) => pts.some(([x, y]) => x > w - m && x < e + m && y > s - m && y < n + m);
+  const inBox = (pts: [number, number][], mm = m) => pts.some(([x, y]) => x > w - mm && x < e + mm && y > s - mm && y < n + mm);
   return {
     pistes: domain.pistes.filter((p) => p.segments.some((seg) => inBox(seg))),
-    lifts: domain.lifts.filter((l) => inBox(l.line)),
+    lifts: domain.lifts.filter((l) => inBox(l.line, 0.075)),
     parks: domain.pois.filter((p) => p.kind === 'snowpark' && inBox([p.coord])).map((p) => p.coord),
+    restaurants: domain.pois.filter((p) => (p.kind === 'restaurant' || p.kind === 'bar') && inBox([p.coord])).map((p) => ({ name: p.name, coord: p.coord })),
   };
 }
 
@@ -62,6 +63,7 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
       nearbyPistes: nb.pistes,
       nearbyLifts: nb.lifts,
       parks: nb.parks,
+      restaurants: nb.restaurants,
       quality,
       onHud: (h) => {
         setHud(h);
@@ -176,7 +178,10 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
           <span className="h-3 w-3 rounded-full border border-white/70" style={{ background: DIFF_COLOR[piste.difficulty] }} />
           <div className="leading-tight">
             <div className="text-[13px] font-bold">{piste.name}</div>
-            <div className="text-[10px] text-glacier-200/60">{piste.sector} · {DIFF_LABEL[piste.difficulty]}</div>
+            <div className="text-[10px] text-glacier-200/60">
+              {piste.sector} · {DIFF_LABEL[piste.difficulty]}
+              {hud && hud.phase !== 'loading' ? ` · ${hud.fps} img/s${hud.renderScale < 100 ? ` (${hud.renderScale} %)` : ''}` : ''}
+            </div>
           </div>
         </div>
         {free && (

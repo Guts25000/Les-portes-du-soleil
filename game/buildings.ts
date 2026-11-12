@@ -36,6 +36,11 @@ export interface Village {
   roads: OsmRoad[];
   forests: OsmForest[];
   pylons: LngLat[];
+  lakes: OsmForest[];
+  rivers: { line: LngLat[]; kind: string }[];
+  rock: OsmForest[];
+  cliffs: LngLat[][];
+  parkings: LngLat[][];
 }
 
 /** Assemble des tronçons de ligne en anneaux fermés (multipolygones OSM). */
@@ -68,7 +73,7 @@ export function assembleRings(parts: LngLat[][]): LngLat[][] {
 export async function fetchVillage(bbox: [number, number, number, number]): Promise<Village> {
   const [w, s, e, n] = bbox;
   const b = `${s},${w},${n},${e}`;
-  const q = `[out:json][timeout:90];(way["building"](${b});way["aerialway"="station"](${b});way["highway"~"^(trunk|primary|secondary|tertiary|unclassified|residential|living_street|service)$"](${b});way["landuse"="forest"](${b});way["natural"="wood"](${b});rel["landuse"="forest"](${b});rel["natural"="wood"](${b});node["aerialway"="pylon"](${b}););out geom;`;
+  const q = `[out:json][timeout:90];(way["building"](${b});way["aerialway"="station"](${b});way["highway"~"^(trunk|primary|secondary|tertiary|unclassified|residential|living_street|service)$"](${b});way["landuse"="forest"](${b});way["natural"="wood"](${b});rel["landuse"="forest"](${b});rel["natural"="wood"](${b});node["aerialway"="pylon"](${b});way["natural"~"^(water|bare_rock|scree|cliff)$"](${b});rel["natural"~"^(water|bare_rock|scree)$"](${b});way["waterway"~"^(river|stream)$"](${b});way["amenity"="parking"](${b}););out geom;`;
   let lastErr: unknown = null;
   for (const url of OVERPASS) {
     try {
@@ -98,6 +103,9 @@ export function parseVillage(elements: RawEl[]): Village {
   const roads: OsmRoad[] = [];
   const forests: OsmForest[] = [];
   const pylons: LngLat[] = [];
+  const lakes: OsmForest[] = [], rock: OsmForest[] = [];
+  const rivers: { line: LngLat[]; kind: string }[] = [];
+  const cliffs: LngLat[][] = [], parkings: LngLat[][] = [];
   const toLine = (g: { lat: number; lon: number }[]) => g.map((p) => [p.lon, p.lat] as LngLat);
   for (const el of elements) {
     const t = el.tags ?? {};
@@ -106,23 +114,29 @@ export function parseVillage(elements: RawEl[]): Village {
       if (t.aerialway === 'pylon' && el.lat != null && el.lon != null) pylons.push([el.lon, el.lat]);
       continue;
     }
+    const isLake = t.natural === 'water';
+    const isRock = t.natural === 'bare_rock' || t.natural === 'scree';
     if (el.type === 'relation') {
-      if (!isForest || !el.members) continue;
+      if (!(isForest || isLake || isRock) || !el.members) continue;
       const outer = assembleRings(el.members.filter((m) => m.type === 'way' && m.role !== 'inner' && m.geometry).map((m) => toLine(m.geometry!)));
       const inner = assembleRings(el.members.filter((m) => m.type === 'way' && m.role === 'inner' && m.geometry).map((m) => toLine(m.geometry!)));
-      if (outer.length) forests.push({ outer, inner });
+      if (outer.length) (isForest ? forests : isLake ? lakes : rock).push({ outer, inner });
       continue;
     }
     if (el.type !== 'way' || !el.geometry || el.geometry.length < 2) continue;
     const line = toLine(el.geometry);
-    if (isForest) {
-      if (line.length >= 4) forests.push({ outer: [line], inner: [] });
+    if (isForest || isLake || isRock) {
+      if (line.length >= 4) (isForest ? forests : isLake ? lakes : rock).push({ outer: [line], inner: [] });
+    } else if (t.natural === 'cliff') cliffs.push(line);
+    else if (t.waterway) rivers.push({ line, kind: t.waterway });
+    else if (t.amenity === 'parking') {
+      if (line.length >= 4) parkings.push(line);
     } else if (t.highway) roads.push({ id: el.id, line, kind: t.highway });
     else if (t.building || t.aerialway === 'station') {
       if (line.length >= 4) buildings.push({ id: el.id, ring: line, tags: t });
     }
   }
-  return { buildings, roads, forests, pylons };
+  return { buildings, roads, forests, pylons, lakes, rivers, rock, cliffs, parkings };
 }
 
 /** Largeur (m) d'une route selon son type OSM. */

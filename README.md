@@ -30,7 +30,8 @@ Premier chargement des pistes : 10 à 60 s, puis cache 24 h dans le navigateur (
 |---|---|---|
 | Relief 3D (carte) | AWS Terrain Tiles (Terrarium : SRTM, EU-DEM…) | **réel** |
 | Relief du simulateur | IGN RGE ALTI® (~4 m, Licence Ouverte Etalab) + AWS hors France | **réel** |
-| Forêts, pylônes, routes, bâtiments du simulateur | OpenStreetMap | **réel** |
+| Arbres du simulateur (forêts, bosquets, arbres isolés) | détectés sur l'orthophoto IGN BD ORTHO® (Etalab), sinon forêts OSM | **réel** |
+| Pylônes, routes, bâtiments, lacs, rivières, rochers, parkings, restaurants | OpenStreetMap | **réel** |
 | Imagerie / fond topo | Esri World Imagery / OpenTopoMap | réel |
 | Pistes, remontées, restaurants, snowparks, points de vue | OpenStreetMap via Overpass (`lib/clientData.ts`) | **réel** (qualité = celle d'OSM) |
 | Altitudes départ/arrivée, dénivelé, pentes | calculées sur le MNT | calcul |
@@ -66,7 +67,9 @@ Aucune donnée « en direct » n'est inventée : tant qu'un flux officiel n'est 
   - combos avec multiplicateur (jusqu'à x5), perdus en cas de chute ;
   - tremplins et rails/boxes le long de la piste et aux emplacements réels des snowparks ; grinds ;
   - rewind (T) de 3 s, fantôme de votre meilleur temps, sons procéduraux (vent, carres, réceptions).
-- Signalisation : jalons à la couleur des pistes (pointe orange côté droit), panneaux de départ, panneaux danger et filets, arches DÉPART/ARRIVÉE, panneaux SNOWPARK.
+- Signalisation et infrastructures : jalons à la couleur des pistes, panneaux directionnels (une lame par piste) aux carrefours, panneaux danger et filets, gares avec poulie, auvent, portiques et file d'attente, restaurants d'altitude avec leur vrai nom et leur terrasse, enneigeurs, lacs gelés, rivières, rochers, parkings, toutes les remontées visibles dans le paysage.
+- Personnage articulé (genoux, buste, bras, bâtons qui piquent dans les virages, position aéro, grabs, assis sur le télésiège) ; caméras poursuite / proche / côté / subjective (C).
+- Performance : forêt à niveaux de détail par carrés de 200 m, terrain découpé en carreaux, résolution dynamique visant 60 images/s (FPS affichés).
 - Remontées jouables en mode libre (E pour embarquer, Espace pour accélérer), mini-carte (M).
 - Graphismes : ciel physique à diffusion atmosphérique, éclairage d'environnement (IBL), bloom, MSAA, étalonnage/vignettage dynamique, ombres jusqu'à 4096, paillettes de neige au soleil, neige à micro-relief, épicéas enneigés. Trois niveaux de qualité (Basse / Haute / Ultra) sélectionnables en jeu.
 - Si le MNT est indisponible, un terrain approximatif est reconstruit **et signalé**.
