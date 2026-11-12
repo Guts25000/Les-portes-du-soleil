@@ -63,6 +63,12 @@ Aucune donnée « en direct » n'est inventée : tant qu'un flux officiel n'est 
 - Commandes : ←/→ ou A/D, ↑/W, ↓/S, Espace, Shift, C (caméra 1re/3e personne), R, Échap. Boutons tactiles sur mobile.
 - Si le MNT est indisponible, un terrain approximatif est reconstruit **et signalé** à l'écran et dans les résultats.
 
+**Championnat Pleney · Nyon · Les Gets** — `data/morzineLesGets.ts`, `lib/sectorMatch.ts`, `lib/championship.ts`
+- Les 74 pistes du forfait Morzine – Les Gets (Pleney, Nyon, Chamossière, Chavannes, Ranfoilly-Nauchets, Rosta-Perrières, Mont-Chéry), d'après les pages officielles d'ouverture des pistes (portesdusoleil.com).
+- Couleurs : officielles pour Morzine ; recoupées sur des guides pour Les Gets ; sinon couleur OSM (la source est indiquée au survol).
+- Chaque piste officielle est rapprochée de ses tracés OSM par le nom (accents, articles, pluriels tolérés) et la position ; les tronçons « partie haute / basse » sont fusionnés. Les pistes sans tracé OSM sont listées « tracé manquant » (rien n'est inventé).
+- Médailles or / argent / bronze par piste, avec des temps cibles calculés sur la longueur réelle du tracé et une vitesse moyenne par couleur. Rouges débloquées à 4 points, noires à 12. Progression enregistrée dans le navigateur.
+
 **Itinéraires (phase 4, première version)** — `lib/routing.ts`
 - Graphe orienté : pistes vers l'aval (sens vérifié sur le MNT), remontées vers l'amont, liaisons à pied courtes.
 - Dijkstra sur le temps estimé ; option « éviter les noires » ; les remontées fermées sont exclues dès que le flux d'état est branché.

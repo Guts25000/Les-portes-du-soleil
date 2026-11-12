@@ -1,11 +1,14 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import MapView, { DEFAULT_FILTERS, type Basemap, type Filters } from './MapView';
 import Sidebar from './Sidebar';
 import SearchBar from './SearchBar';
 import DetailCard from './DetailCard';
 import RoutePlanner from './RoutePlanner';
+import ChampionshipPanel from './ChampionshipPanel';
+import { matchSector } from '@/lib/sectorMatch';
+import { loadChamp, medalTargets, recordRun, saveChamp, type ChampState, type MedalTargets } from '@/lib/championship';
 import type { DomainData, Piste, Selection, Webcam } from '@/lib/types';
 import type { WeatherPayload } from '@/lib/weather';
 import type { RouteResult } from '@/lib/routing';
@@ -34,7 +37,16 @@ export default function App() {
   const [routeOpen, setRouteOpen] = useState(false);
   const [routeFrom, setRouteFrom] = useState<string | undefined>();
   const [route, setRoute] = useState<RouteResult | null>(null);
-  const [skiing, setSkiing] = useState<Piste | null>(null);
+  const [skiing, setSkiing] = useState<{ piste: Piste; targets?: MedalTargets } | null>(null);
+  const [champOpen, setChampOpen] = useState(false);
+  const [champ, setChamp] = useState<ChampState>(() => loadChamp());
+  const sectorEntries = useMemo(() => matchSector(data), [data]);
+  const openChamp = () => {
+    setSelection(null);
+    setRouteOpen(false);
+    setChampOpen(true);
+    if (window.innerWidth < 768) setSidebar(false);
+  };
 
   // Webcams : configuration manuelle + webcams taguées dans OSM
   const webcams: Webcam[] = WEBCAMS;
@@ -60,6 +72,7 @@ export default function App() {
   const select = useCallback((s: Selection, fly = false) => {
     setSelection(s);
     setRouteOpen(false);
+    setChampOpen(false);
     if (fly) setFocus({ sel: s, nonce: Date.now() });
   }, []);
 
@@ -119,8 +132,10 @@ export default function App() {
             setBasemap={setBasemap}
             mode3d={mode3d}
             setMode3d={setMode3d}
+            onOpenChampionship={openChamp}
             onOpenRoute={() => {
               setSelection(null);
+              setChampOpen(false);
               setRouteOpen(true);
               if (window.innerWidth < 768) setSidebar(false);
             }}
@@ -132,6 +147,9 @@ export default function App() {
 
           {/* Boutons rapides */}
           <div className="pointer-events-auto absolute bottom-6 left-1/2 flex -translate-x-1/2 gap-2 md:bottom-4">
+            <button className="glass btn rounded-xl !border-amber-300/40" onClick={openChamp}>
+              🏆 <span className="hidden sm:inline">Championnat</span>
+            </button>
             <button className={`glass btn rounded-xl ${mode3d ? '!bg-electric-500/80' : ''}`} onClick={() => setMode3d(!mode3d)}>
               {mode3d ? '3D' : '2D'}
             </button>
@@ -139,6 +157,7 @@ export default function App() {
               className="glass btn rounded-xl"
               onClick={() => {
                 setSelection(null);
+                setChampOpen(false);
                 setRouteOpen(true);
               }}
             >
@@ -159,7 +178,7 @@ export default function App() {
                 weather={weather?.sectors ?? null}
                 live={live}
                 onClose={() => setSelection(null)}
-                onSki={(p) => setSkiing(p)}
+                onSki={(p) => setSkiing({ piste: p })}
                 onRouteFrom={(id) => {
                   setRouteFrom(id);
                   setSelection(null);
@@ -167,12 +186,41 @@ export default function App() {
                 }}
               />
             )}
+            {champOpen && (
+              <ChampionshipPanel
+                entries={sectorEntries}
+                champ={champ}
+                loading={!data && !dataError}
+                onClose={() => setChampOpen(false)}
+                onShow={(p) => select({ type: 'piste', item: p }, true)}
+                onSki={(e) => e.piste && setSkiing({ piste: e.piste, targets: medalTargets(e.piste.lengthM, e.difficulty) })}
+              />
+            )}
             {routeOpen && <RoutePlanner data={data} live={live} initialFrom={routeFrom} onRoute={setRoute} onClose={() => setRouteOpen(false)} />}
           </div>
         </div>
       )}
 
-      {skiing && data && <SkiSimulator piste={skiing} domain={data} onExit={() => setSkiing(null)} />}
+      {skiing && data && (
+        <SkiSimulator
+          piste={skiing.piste}
+          domain={data}
+          targets={skiing.targets}
+          onExit={() => setSkiing(null)}
+          onRun={
+            skiing.targets
+              ? (r) => {
+                  const targets = skiing.targets!;
+                  setChamp((prev) => {
+                    const next = recordRun(prev, skiing.piste.id, r.timeS, r.score, targets).state;
+                    saveChamp(next);
+                    return next;
+                  });
+                }
+              : undefined
+          }
+        />
+      )}
     </div>
   );
 }

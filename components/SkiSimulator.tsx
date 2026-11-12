@@ -5,12 +5,17 @@ import { SkiGame, type GameResult, type Hud } from '@/game/SkiGame';
 import type { Input } from '@/game/physics';
 import { bboxOf } from '@/lib/geo';
 import { DIFF_COLOR, DIFF_LABEL } from '@/lib/estimates';
+import { MEDAL_ICON, medalFor, type MedalTargets } from '@/lib/championship';
 import { fmtTime, getPlayerName, leaderboard, personalBest, saveRun, setPlayerName, type RunResult } from '@/lib/scores';
 
 interface Props {
   piste: Piste;
   domain: DomainData;
   onExit: () => void;
+  /** Mode championnat : temps cibles des médailles. */
+  targets?: MedalTargets;
+  /** Appelé à chaque descente terminée (mode championnat). */
+  onRun?: (r: GameResult) => void;
 }
 
 function nearby(piste: Piste, domain: DomainData) {
@@ -23,7 +28,7 @@ function nearby(piste: Piste, domain: DomainData) {
   };
 }
 
-export default function SkiSimulator({ piste, domain, onExit }: Props) {
+export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const game = useRef<SkiGame | null>(null);
   const [loading, setLoading] = useState<string | null>('Initialisation…');
@@ -37,6 +42,8 @@ export default function SkiSimulator({ piste, domain, onExit }: Props) {
   const [player, setPlayer] = useState(getPlayerName());
   const exitRef = useRef(onExit);
   exitRef.current = onExit;
+  const runRef = useRef(onRun);
+  runRef.current = onRun;
 
   useEffect(() => {
     if (!box.current) return;
@@ -52,6 +59,7 @@ export default function SkiSimulator({ piste, domain, onExit }: Props) {
       },
       onFinish: async (r) => {
         setResult(r);
+        runRef.current?.(r);
         const pb = personalBest(piste.id);
         setPrevBest(pb);
         const run: RunResult = {
@@ -140,6 +148,15 @@ export default function SkiSimulator({ piste, domain, onExit }: Props) {
           <div className="glass rounded-2xl px-4 py-2 text-right">
             <div className="font-mono text-2xl font-bold tabular-nums">{fmtTime(hud.time)}</div>
             <div className="text-[10px] text-glacier-200/60">{best ? `Record : ${fmtTime(best.timeS)}` : 'Pas encore de record'}</div>
+            {targets && (
+              <div className="mt-1 flex justify-end gap-2 text-[11px] tabular-nums">
+                {(['or', 'argent', 'bronze'] as const).map((m) => (
+                  <span key={m} className={hud.time > targets[m] ? 'opacity-30 line-through' : ''}>
+                    {MEDAL_ICON[m]} {fmtTime(targets[m])}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -230,8 +247,22 @@ export default function SkiSimulator({ piste, domain, onExit }: Props) {
       {result && (
         <div className="absolute inset-0 grid place-items-center bg-anthracite-950/70 p-4 backdrop-blur-sm">
           <div className="glass animate-fade-up w-full max-w-md rounded-3xl p-6">
-            <div className="label">Descente terminée</div>
+            <div className="label">{targets ? 'Championnat Morzine – Les Gets' : 'Descente terminée'}</div>
             <h2 className="text-2xl font-extrabold">{piste.name}</h2>
+            {targets && (() => {
+              const m = medalFor(result.timeS, targets);
+              return (
+                <div className={`mt-3 flex items-center gap-3 rounded-2xl px-4 py-3 ${m ? 'bg-amber-400/15 border border-amber-300/40' : 'bg-white/5'}`}>
+                  <span className="text-4xl">{m ? MEDAL_ICON[m] : '🏁'}</span>
+                  <div className="text-[13px]">
+                    <div className="font-bold">{m ? `Médaille ${m === 'or' ? "d'or" : m === 'argent' ? "d'argent" : 'de bronze'} !` : 'Pas de médaille cette fois'}</div>
+                    <div className="text-glacier-100/70">
+                      🥇 {fmtTime(targets.or)} · 🥈 {fmtTime(targets.argent)} · 🥉 {fmtTime(targets.bronze)}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
             <div className="mt-4 grid grid-cols-3 gap-2 text-center">
               {[
                 ['Temps', fmtTime(result.timeS)],

@@ -24,6 +24,7 @@ interface Props {
   mode3d: boolean;
   setMode3d: (b: boolean) => void;
   onOpenRoute: () => void;
+  onOpenChampionship: () => void;
 }
 
 const windDir = (d: number) => ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'][Math.round(d / 45) % 8];
@@ -221,6 +222,7 @@ export default function Sidebar(p: Props) {
             </div>
           </section>
 
+          <button className="btn-ghost w-full !border-amber-300/40" onClick={p.onOpenChampionship}>🏆 Championnat Pleney · Nyon · Les Gets</button>
           <button className="btn-ghost w-full" onClick={p.onOpenRoute}>🧭 Calculer un itinéraire</button>
 
           <section className="space-y-1 border-t border-white/5 pt-3 text-[10px] leading-snug text-glacier-200/40">
