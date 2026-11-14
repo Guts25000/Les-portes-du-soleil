@@ -41,3 +41,13 @@ export function nearestStation(p: LngLat): Station {
   }
   return best;
 }
+
+/** Emprise du monde 3D pré-calculé du jeu (secteur Pléney – Nyon – Les Gets, voir scripts/bake). */
+export const GAME_BBOX: [number, number, number, number] = [6.61253, 46.11771, 6.74547, 46.19829];
+
+/** La piste est-elle entièrement jouable dans le monde 3D ? */
+export function inGameSector(line: LngLat[]): boolean {
+  const [w, s, e, n] = GAME_BBOX;
+  const m = 0.004;
+  return line.length > 1 && line.every(([x, y]) => x > w + m && x < e - m && y > s + m && y < n - m);
+}

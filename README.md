@@ -29,8 +29,9 @@ Premier chargement des pistes : 10 à 60 s, puis cache 24 h dans le navigateur (
 | Élément | Source | Statut |
 |---|---|---|
 | Relief 3D (carte) | AWS Terrain Tiles (Terrarium : SRTM, EU-DEM…) | **réel** |
-| Relief du simulateur | IGN RGE ALTI® (~4 m, Licence Ouverte Etalab) + AWS hors France | **réel** |
-| Arbres du simulateur (forêts, bosquets, arbres isolés) | détectés sur l'orthophoto IGN BD ORTHO® (Etalab), sinon forêts OSM | **réel** |
+| Relief du simulateur | IGN RGE ALTI® (Licence Ouverte Etalab) au pas de 5 m sur le secteur, AWS Terrain Tiles à l'horizon — pré-calculé dans `public/world` | **réel** |
+| Arbres du simulateur (~1,1 million : forêts, bosquets, arbres isolés) | chaque sapin est placé là où l'orthophoto IGN BD ORTHO® (Etalab) montre un résineux | **réel** (position), forme générée |
+| Largeur des pistes du simulateur | bord réel de la forêt mesuré sur l'orthophoto, sinon largeur type par couleur | **réel** / estimation |
 | Pylônes, routes, bâtiments, lacs, rivières, rochers, parkings, restaurants | OpenStreetMap | **réel** |
 | Imagerie / fond topo | Esri World Imagery / OpenTopoMap | réel |
 | Pistes, remontées, restaurants, snowparks, points de vue | OpenStreetMap via Overpass (`lib/clientData.ts`) | **réel** (qualité = celle d'OSM) |
@@ -57,9 +58,10 @@ Aucune donnée « en direct » n'est inventée : tant qu'un flux officiel n'est 
 - Panneau latéral rétractable : météo par secteur, vent, rafales, visibilité, neige au sol, chutes récentes, filtres d'affichage.
 - Recherche (stations, pistes, remontées, POI, webcams) avec déplacement automatique de la caméra.
 
-**Ski Simulator (phase 3)** — `game/`
-- Monde ouvert : la piste choisie + 1,3 km autour en relief détaillé (MNT zoom 13–14), panorama réel sur 5,5 km.
-- Concordance avec le réel : pistes, remontées, bâtiments, routes déneigées et snowparks viennent d'OpenStreetMap ; le terrain est terrassé sous chaque bâtiment ; les gares OSM remplacent les gares génériques.
+**Ski Simulator (phase 3)** — `game/`, `scripts/bake/`, `public/world/`
+- **Une seule carte fixe du secteur Pléney – Nyon – Les Gets** (10,2 × 9 km : Pléney, Nyon, Chamossière, Chavannes, Mont-Chéry, Ranfoilly, Rosta, villages de Morzine et des Gets), pré-calculée une fois pour toutes et chargée d'un bloc (≈ 24 Mo, barre de progression). Plus de « zone max » : mode libre sur tout le secteur, les 48 remontées sont jouables.
+- Pré-calcul (`npm run bake`, voir plus bas) : relief IGN 5 m, textures du sol à 2,5 m/pixel (neige, pistes damées, routes déneigées, sous-bois, rochers, lacs gelés), ombres du relief, des sapins et des chalets, occlusion ambiante, sens de damage, ~1,1 million de sapins à leur emplacement réel, 7 800 chalets OSM terrassés.
+- Pistes peintes à leur vraie largeur (bord de la forêt mesuré sur la photo aérienne), jalons posés au bord réel de la piste damée, tracé de course = plus longue descente continue à travers les tronçons OSM (plus d'allers-retours).
 - Gameplay arcade inspiré de Rider Republic :
   - saut chargé (maintenir Espace, relâcher ; « pop » au bord des tremplins) ;
   - en l'air : spins par demi-tours (180, 360, 540…) avec ←/→, frontflips/backflips avec ↑/↓, grabs avec Shift (Mute, Japan, Nose, Tail) ;
@@ -67,12 +69,12 @@ Aucune donnée « en direct » n'est inventée : tant qu'un flux officiel n'est 
   - combos avec multiplicateur (jusqu'à x5), perdus en cas de chute ;
   - tremplins et rails/boxes le long de la piste et aux emplacements réels des snowparks ; grinds ;
   - rewind (T) de 3 s, fantôme de votre meilleur temps, sons procéduraux (vent, carres, réceptions).
-- Signalisation et infrastructures : jalons à la couleur des pistes, panneaux directionnels (une lame par piste) aux carrefours, panneaux danger et filets, gares avec poulie, auvent, portiques et file d'attente, restaurants d'altitude avec leur vrai nom et leur terrasse, enneigeurs, lacs gelés, rivières, rochers, parkings, toutes les remontées visibles dans le paysage.
-- Personnage articulé (genoux, buste, bras, bâtons qui piquent dans les virages, position aéro, grabs, assis sur le télésiège) ; caméras poursuite / proche / côté / subjective (C).
-- Performance : forêt à niveaux de détail par carrés de 200 m, terrain découpé en carreaux, résolution dynamique visant 60 images/s (FPS affichés).
+- Signalisation et infrastructures : jalons à la couleur des pistes, panneaux directionnels (une lame par piste) aux carrefours, flèches jaunes « LES GETS / MORZINE / LE PLÉNEY… » aux arrivées, panneaux danger et filets, gares de télécabine (bardage métallique, auvent, nom de la remontée), télésièges débrayables (carénage profilé + garage des sièges), télésièges fixes (poulie apparente), pylônes avec échelle, passerelles et matelas de protection sur les pistes, cabines de télécabine vitrées, restaurants d'altitude avec leur vrai nom et leur terrasse, enneigeurs.
+- Personnage articulé redessiné (veste bleue à bande orange, pantalon orange, casque jaune, masque miroir, chaussures à boucles, skis cambrés) : genoux, buste, bras, bâtons qui piquent dans les virages, position aéro, grabs, assis sur le télésiège ; il s'assombrit à l'ombre des crêtes et des forêts ; caméras poursuite / proche / côté / subjective (C).
+- Performance (objectif 60 images/s) : tout est préparé au chargement, rien n'est calculé pendant la descente ; sol en carreaux de 640 m à 5 niveaux de détail ; sapins dessinés en 2 appels (épicéa détaillé près de vous, silhouette plus loin, puis la forêt « peinte » au sol) ; décor fusionné par carrés de 2,5 km (≈ 3 000 objets → quelques dizaines d'appels de dessin) ; inscriptions regroupées dans un atlas ; ombres temps réel limitées au skieur, le reste est pré-calculé ; plus de tampon de profondeur logarithmique ; résolution dynamique.
 - Remontées jouables en mode libre (E pour embarquer, Espace pour accélérer), mini-carte (M).
-- Graphismes : ciel physique à diffusion atmosphérique, éclairage d'environnement (IBL), bloom, MSAA, étalonnage/vignettage dynamique, ombres jusqu'à 4096, paillettes de neige au soleil, neige à micro-relief, épicéas enneigés. Trois niveaux de qualité (Basse / Haute / Ultra) sélectionnables en jeu.
-- Si le MNT est indisponible, un terrain approximatif est reconstruit **et signalé**.
+- Graphismes : ciel physique, lumière pré-calculée (soleil de fin de matinée en mars), grain de la neige et stries de damage dans le sens de la pente de près, paillettes au soleil, épicéas chargés de neige, montagnes jusqu'au massif du Mont-Blanc à l'horizon, brume de distance. Trois niveaux de qualité (Basse / Haute / Ultra) sélectionnables en jeu.
+- Le bouton « Skier cette piste » n'apparaît que pour les pistes du secteur pré-calculé.
 
 **Championnat Pleney · Nyon · Les Gets** — `data/morzineLesGets.ts`, `lib/sectorMatch.ts`, `lib/championship.ts`
 - Les 74 pistes du forfait Morzine – Les Gets (Pleney, Nyon, Chamossière, Chavannes, Ranfoilly-Nauchets, Rosta-Perrières, Mont-Chéry), d'après les pages officielles d'ouverture des pistes (portesdusoleil.com).
@@ -98,7 +100,20 @@ Aucune donnée « en direct » n'est inventée : tant qu'un flux officiel n'est 
 - L'emprise de chargement (`DOMAIN_BBOX`) inclut quelques pistes voisines hors Portes du Soleil (ex. Roc d'Enfer). Pour les exclure, remplacer la bbox par le polygone du domaine.
 - Les coordonnées des stations (`lib/stations.ts`) sont des centres de village approximatifs (étiquettes, météo, secteur).
 - La complétude des pistes dépend d'OSM ; les pistes découpées en morceaux sont chaînées automatiquement (tolérance 40 m).
+- Simulateur : les formes des sapins, chalets et gares sont génériques (seules les positions et emprises sont réelles) ; le relief IGN servi par le WMS est à ~5 m sur le secteur, il est lissé pour éviter les marches ; les pistes absentes d'OSM ne sont pas jouables.
 - Tuiles Esri/OpenTopoMap/demotiles : adaptées à un prototype. En production, passer sur un fournisseur avec clé (MapTiler, IGN Géoplateforme, swisstopo) et respecter leurs conditions.
+
+## Refaire la carte du jeu (pré-calcul)
+
+Les fichiers de `public/world` sont déjà dans le dépôt : rien à faire pour publier. Pour les régénérer (nouvelle version d'OSM, autre soleil…) :
+
+```bash
+npm i -D sharp          # une fois : décodage/encodage des images
+npm run bake            # téléchargements IGN/AWS/OSM (~120 Mo, mis en cache dans scripts/bake/.cache) puis calculs (~2 min)
+npm run check:world     # vérifie qu'aucun sapin n'est posé sur l'axe d'une piste
+```
+
+Étapes : `fetch.mts` (relief IGN 2,5 m, orthophoto IGN 1,25 m, relief et photo lointains), `osm.mts` (extrait OSM via l'API 0.6), `data.mts` (assemblage, largeur réelle des pistes, terrassement, sapins), `render.mts` (textures, ombres, fichiers finaux). L'emprise et la maille sont dans `scripts/bake/def.mts`.
 
 ## Structure
 
@@ -106,11 +121,13 @@ Aucune donnée « en direct » n'est inventée : tant qu'un flux officiel n'est 
 app/            page Next.js (export statique)
 .github/        workflow de déploiement GitHub Pages
 components/     App, MapView, Sidebar, SearchBar, DetailCard, RoutePlanner, SkiSimulator
-game/           SkiGame (Three.js), physics (pure, testée), track (géométrie du parcours)
+game/           SkiGame (Three.js), world (chargement de la carte), terrain, trees, sunvis, batch, atlas,
+                physics (pure, testée), track, runline (tracé de course), lifts, buildings, infra, signage
+scripts/bake/   pré-calcul de la carte du jeu → public/world
 lib/            types, géo, parsing OSM, MNT, itinéraires, estimations, météo, scores, flux live
 data/           webcams
 supabase/       schéma SQL (scores, profils)
 scripts/        tests sans réseau
 ```
 
-Attributions : © contributeurs OpenStreetMap (ODbL) · AWS Terrain Tiles / Mapzen · Esri · OpenTopoMap (CC-BY-SA) · Open-Meteo (CC BY 4.0).
+Attributions : © contributeurs OpenStreetMap (ODbL) · IGN RGE ALTI® et BD ORTHO® (Licence Ouverte Etalab 2.0) · AWS Terrain Tiles / Mapzen · Esri · OpenTopoMap (CC-BY-SA) · Open-Meteo (CC BY 4.0).

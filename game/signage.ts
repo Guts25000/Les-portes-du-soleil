@@ -3,6 +3,7 @@
  * panneaux de danger. Textures dessinées sur canvas.
  */
 import * as THREE from 'three';
+import { slot, slotPlane, type Slot } from './atlas';
 import type { Difficulty } from '@/lib/types';
 import { DIFF_COLOR, DIFF_LABEL } from '@/lib/estimates';
 
@@ -35,8 +36,8 @@ function fitText(ctx: CanvasRenderingContext2D, text: string, maxW: number, size
 }
 
 /** Panneau de départ de piste : nom + couleur, au format des panneaux français. */
-export function pisteSignTexture(name: string, d: Difficulty): THREE.CanvasTexture {
-  return canvasTexture(512, 256, (ctx) => {
+export function pisteSignTexture(name: string, d: Difficulty): Slot {
+  return slot(512, 256, (ctx) => {
     ctx.fillStyle = PANEL_BG[d];
     ctx.fillRect(0, 0, 512, 256);
     ctx.strokeStyle = '#ffffff';
@@ -53,8 +54,8 @@ export function pisteSignTexture(name: string, d: Difficulty): THREE.CanvasTextu
 }
 
 /** Panneau de remontée (fond blanc, pictogramme). */
-export function liftSignTexture(name: string, kindLabel: string): THREE.CanvasTexture {
-  return canvasTexture(512, 256, (ctx) => {
+export function liftSignTexture(name: string, kindLabel: string): Slot {
+  return slot(512, 256, (ctx) => {
     ctx.fillStyle = '#f8fafc';
     ctx.fillRect(0, 0, 512, 256);
     ctx.fillStyle = '#0f172a';
@@ -73,8 +74,8 @@ export function liftSignTexture(name: string, kindLabel: string): THREE.CanvasTe
   });
 }
 
-export function dangerSignTexture(text: string): THREE.CanvasTexture {
-  return canvasTexture(256, 256, (ctx) => {
+export function dangerSignTexture(text: string): Slot {
+  return slot(256, 256, (ctx) => {
     ctx.fillStyle = '#facc15';
     ctx.beginPath();
     ctx.moveTo(128, 16);
@@ -95,8 +96,16 @@ export function dangerSignTexture(text: string): THREE.CanvasTexture {
   });
 }
 
+export function bannerSlot(text: string, color = '#1f6bff'): Slot {
+  return slot(1024, 128, (ctx) => drawBanner(ctx, text, color));
+}
+
 export function bannerTexture(text: string, color = '#1f6bff'): THREE.CanvasTexture {
-  return canvasTexture(1024, 128, (ctx) => {
+  return canvasTexture(1024, 128, (ctx) => drawBanner(ctx, text, color));
+}
+
+function drawBanner(ctx: CanvasRenderingContext2D, text: string, color: string) {
+  {
     ctx.fillStyle = color;
     ctx.fillRect(0, 0, 1024, 128);
     ctx.fillStyle = '#ffffff';
@@ -104,26 +113,22 @@ export function bannerTexture(text: string, color = '#1f6bff'): THREE.CanvasText
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(text, 512, 68);
-  });
+  }
 }
 
 const poleMat = new THREE.MeshStandardMaterial({ color: 0x9aa3ad, metalness: 0.5, roughness: 0.5 });
 
 /** Panneau sur poteau, lisible des deux côtés. */
-export function makeSign(tex: THREE.Texture, width: number, height: number, poleH: number): THREE.Group {
+export function makeSign(tex: Slot, width: number, height: number, poleH: number): THREE.Group {
   const g = new THREE.Group();
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, poleH + height, 6), poleMat);
   pole.position.y = (poleH + height) / 2;
   pole.castShadow = true;
   g.add(pole);
-  const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 });
-  const front = new THREE.Mesh(new THREE.PlaneGeometry(width, height), mat);
+  const front = slotPlane(tex, width, height);
   front.position.set(0, poleH + height / 2, 0.05);
   front.castShadow = true;
-  const back = front.clone();
-  back.rotation.y = Math.PI;
-  back.position.z = -0.05;
-  g.add(front, back);
+  g.add(front);
   return g;
 }
 
@@ -148,7 +153,7 @@ export function makePoles(
   });
   rightPoles.forEach((p, i) => tips.setMatrixAt(i, m.makeTranslation(p.x, p.y, p.z)));
   tips.count = rightPoles.length;
-  body.castShadow = true;
+  body.castShadow = false;
   g.add(body, tips);
   return g;
 }

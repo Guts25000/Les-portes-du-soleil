@@ -5,6 +5,7 @@
  * plantés de bâtons, position assise sur le télésiège.
  */
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 
 export interface SkierColors {
   jacket: number;
@@ -71,15 +72,31 @@ export class SkierRig {
     this.root.add(this.lean);
     this.lean.add(this.skis);
 
-    // --- skis (spatule relevée) et fixations
+    // --- skis : spatule et talon relevés, largeur en taille de guêpe, fixations
+    const skiGeo = (() => {
+      const g = new THREE.BoxGeometry(0.09, 0.022, 1.72, 2, 1, 24);
+      const p = g.getAttribute('position') as THREE.BufferAttribute;
+      for (let i = 0; i < p.count; i++) {
+        const z = p.getZ(i);
+        let y = p.getY(i);
+        let x = p.getX(i);
+        if (z > 0.62) y += (z - 0.62) ** 2 * 1.15;
+        if (z < -0.72) y += (-0.72 - z) ** 2 * 0.55;
+        const waist = 1 - 0.14 * Math.exp(-((z * 2.2) ** 2));
+        const tipNarrow = z > 0.78 ? 1 - (z - 0.78) * 1.6 : 1;
+        x *= waist * Math.max(0.55, tipNarrow);
+        p.setXYZ(i, x, y, z);
+      }
+      g.computeVertexNormals();
+      return g;
+    })();
     for (const sx of [-0.12, 0.12]) {
       const ski = new THREE.Group();
       ski.position.x = sx;
-      mesh(new THREE.BoxGeometry(0.085, 0.025, 1.55), mSki, ski, 0, 0.03, -0.05);
-      mesh(new THREE.BoxGeometry(0.087, 0.008, 1.55), mSkiBase, ski, 0, 0.014, -0.05);
-      const tip = mesh(new THREE.BoxGeometry(0.085, 0.025, 0.22), mSki, ski, 0, 0.07, 0.8);
-      tip.rotation.x = -0.45;
-      mesh(new THREE.BoxGeometry(0.075, 0.05, 0.36), mBinding, ski, 0, 0.07, 0);
+      mesh(skiGeo, mSki, ski, 0, 0.03, -0.02);
+      mesh(new THREE.BoxGeometry(0.06, 0.004, 1.2), mAccent, ski, 0, 0.042, -0.05);
+      mesh(new RoundedBoxGeometry(0.08, 0.055, 0.42, 2, 0.02), mBinding, ski, 0, 0.07, 0);
+      mesh(new RoundedBoxGeometry(0.07, 0.07, 0.09, 2, 0.02), mSkiBase, ski, 0, 0.09, -0.19);
       this.skis.add(ski);
     }
 
@@ -88,32 +105,42 @@ export class SkierRig {
       const foot = new THREE.Group();
       foot.position.set(sx, 0.09, 0);
       this.lean.add(foot);
-      mesh(new THREE.BoxGeometry(0.13, 0.2, 0.3), mBoot, foot, 0, 0.06, 0.02);
+      mesh(new RoundedBoxGeometry(0.13, 0.17, 0.32, 3, 0.05), mBoot, foot, 0, 0.05, 0.03);
+      mesh(new RoundedBoxGeometry(0.14, 0.035, 0.34, 2, 0.015), mSkiBase, foot, 0, -0.03, 0.03);
+      for (const by of [0.04, 0.12]) mesh(new THREE.BoxGeometry(0.145, 0.018, 0.04), mAccent, foot, 0, by, 0.1); // boucles
       const shin = new THREE.Group();
       shin.position.y = 0.06;
       foot.add(shin);
-      mesh(new THREE.CapsuleGeometry(0.07, SHIN - 0.1, 4, 10), mBoot, shin, 0, 0.16, 0).scale.set(1, 0.6, 1.1); // tige de chaussure
-      mesh(new THREE.CapsuleGeometry(0.068, SHIN - 0.12, 4, 10), mPants, shin, 0, SHIN / 2, 0);
+      mesh(new THREE.CapsuleGeometry(0.072, SHIN - 0.12, 4, 12), mBoot, shin, 0, 0.13, 0.005).scale.set(1, 0.55, 1.12); // tige de chaussure
+      mesh(new THREE.CapsuleGeometry(0.083, SHIN - 0.14, 4, 12), mPants, shin, 0, SHIN / 2 + 0.03, 0).scale.set(1, 1, 1.05);
+      mesh(new THREE.SphereGeometry(0.09, 12, 10), mPants, shin, 0, SHIN - 0.01, 0.01); // genou
       const knee = new THREE.Group();
       knee.position.y = SHIN;
       shin.add(knee);
-      mesh(new THREE.CapsuleGeometry(0.085, THIGH - 0.12, 4, 10), mPants, knee, 0, THIGH / 2, 0);
+      mesh(new THREE.CapsuleGeometry(0.098, THIGH - 0.12, 4, 12), mPants, knee, 0, THIGH / 2, 0).scale.set(1, 1, 1.08);
+      mesh(new THREE.BoxGeometry(0.025, 0.09, 0.07), mAccent, knee, sx > 0 ? 0.095 : -0.095, THIGH / 2, 0.01); // poche cargo
       this.legs.push({ shin, knee, foot });
     }
 
     // --- buste (positionné au bassin calculé)
     this.lean.add(this.torso);
     mesh(new THREE.CapsuleGeometry(0.16, 0.14, 4, 12), mPants, this.torso, 0, 0.02, 0).scale.set(1.15, 1, 0.9);
-    const chest = mesh(new THREE.CapsuleGeometry(0.165, 0.3, 6, 14), mJacket, this.torso, 0, 0.33, 0);
-    chest.scale.set(1.08, 1, 0.8);
-    mesh(new THREE.BoxGeometry(0.36, 0.05, 0.25), mAccent, this.torso, 0, 0.22, 0.01).scale.set(1, 1, 1);
-    mesh(new THREE.CylinderGeometry(0.075, 0.09, 0.1, 10), mAccent, this.torso, 0, 0.6, 0.01); // tour de cou
+    const chest = mesh(new THREE.CapsuleGeometry(0.18, 0.3, 8, 16), mJacket, this.torso, 0, 0.34, 0);
+    chest.scale.set(1.1, 1, 0.82);
+    const hem = mesh(new THREE.CylinderGeometry(0.2, 0.215, 0.12, 16), mJacket, this.torso, 0, 0.12, 0);
+    hem.scale.set(1.05, 1, 0.82);
+    mesh(new THREE.BoxGeometry(0.4, 0.035, 0.31), mAccent, this.torso, 0, 0.24, 0.0); // bande réfléchissante
+    mesh(new THREE.BoxGeometry(0.012, 0.42, 0.012), mBinding, this.torso, 0, 0.36, 0.152); // fermeture éclair
+    const collar = mesh(new THREE.CylinderGeometry(0.1, 0.13, 0.13, 14), mJacket, this.torso, 0, 0.61, 0.0);
+    collar.scale.set(1, 1, 0.9);
+    const hood = mesh(new THREE.TorusGeometry(0.12, 0.04, 8, 16, Math.PI * 1.2), mJacket, this.torso, 0, 0.64, -0.04);
+    hood.rotation.set(Math.PI / 2 + 0.3, 0, Math.PI * 0.9);
     this.head.position.set(0, 0.73, 0.02);
     this.torso.add(this.head);
     mesh(new THREE.SphereGeometry(0.11, 16, 12), mSkin, this.head, 0, 0, 0.01);
     const helmet = mesh(new THREE.SphereGeometry(0.135, 20, 14, 0, Math.PI * 2, 0, Math.PI * 0.62), mHelmet, this.head, 0, 0.02, -0.01);
     helmet.scale.set(1, 1.02, 1.1);
-    const goggles = mesh(new THREE.CylinderGeometry(0.128, 0.128, 0.07, 18, 1, true, -1.15, 2.3), mGoggle, this.head, 0, 0.01, 0.0);
+    const goggles = mesh(new THREE.CylinderGeometry(0.138, 0.138, 0.078, 22, 1, false, -1.05, 2.1), mGoggle, this.head, 0, 0.0, 0.0);
     goggles.rotation.y = Math.PI / 2;
     goggles.scale.set(1.04, 1, 1.08);
     mesh(new THREE.TorusGeometry(0.131, 0.012, 6, 24, Math.PI * 1.15), mBinding, this.head, 0, 0.01, -0.01).rotation.set(Math.PI / 2, 0, -0.4);
@@ -123,13 +150,15 @@ export class SkierRig {
       const shoulder = new THREE.Group();
       shoulder.position.set(side * 0.24, 0.5, 0);
       this.torso.add(shoulder);
-      mesh(new THREE.CapsuleGeometry(0.06, 0.24, 4, 10), mJacket, shoulder, 0, -0.15, 0);
+      mesh(new THREE.SphereGeometry(0.085, 12, 10), mJacket, shoulder, 0, -0.01, 0);
+      mesh(new THREE.CapsuleGeometry(0.068, 0.22, 4, 12), mJacket, shoulder, 0, -0.15, 0);
       mesh(new THREE.CylinderGeometry(0.062, 0.062, 0.05, 10), mAccent, shoulder, 0, -0.03, 0);
       const elbow = new THREE.Group();
       elbow.position.y = -0.3;
       shoulder.add(elbow);
-      mesh(new THREE.CapsuleGeometry(0.052, 0.22, 4, 10), mJacket, elbow, 0, -0.13, 0);
-      mesh(new THREE.SphereGeometry(0.06, 10, 8), mGlove, elbow, 0, -0.29, 0.01).scale.set(0.9, 1.1, 1);
+      mesh(new THREE.CapsuleGeometry(0.06, 0.2, 4, 12), mJacket, elbow, 0, -0.12, 0);
+      mesh(new THREE.CylinderGeometry(0.058, 0.052, 0.06, 12), mGlove, elbow, 0, -0.245, 0); // manchette
+      mesh(new RoundedBoxGeometry(0.085, 0.11, 0.1, 2, 0.035), mGlove, elbow, 0, -0.3, 0.01);
       const pole = new THREE.Group();
       pole.position.set(0, -0.29, 0.02);
       elbow.add(pole);

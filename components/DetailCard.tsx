@@ -1,4 +1,5 @@
 'use client';
+import { inGameSector } from '@/lib/stations';
 import { useEffect, useMemo, useState } from 'react';
 import type { DomainData, Piste, Selection } from '@/lib/types';
 import { sharedDem } from '@/lib/dem';
@@ -177,9 +178,15 @@ export default function DetailCard({ sel, data, weather, live, onClose, onSki, o
             Itinéraire non damé / hors-piste : information uniquement. Matériel DVA-pelle-sonde et connaissance du risque d'avalanche indispensables.
           </div>
         )}
-        <button className="btn-primary w-full py-3.5 text-[15px] font-bold tracking-wide pulse-ring" onClick={() => onSki(p)}>
-          ⛷️ SKIER CETTE PISTE
-        </button>
+        {inGameSector(p.line) ? (
+          <button className="btn-primary w-full py-3.5 text-[15px] font-bold tracking-wide pulse-ring" onClick={() => onSki(p)}>
+            ⛷️ SKIER CETTE PISTE
+          </button>
+        ) : (
+          <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-center text-[12px] text-glacier-100/70">
+            ⛷️ Le simulateur couvre le secteur <b>Pléney – Nyon – Les Gets</b> (carte 3D pré-calculée). Cette piste est en dehors.
+          </div>
+        )}
         <div className="text-[10px] text-glacier-200/40">
           OSM : {p.osmIds.slice(0, 4).map((id) => `#${id}`).join(', ')}
           {p.osmIds.length > 4 ? '…' : ''} {p.grooming ? `· damage : ${p.grooming}` : ''}

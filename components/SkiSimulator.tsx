@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from 'react';
 import type { DomainData, Piste } from '@/lib/types';
 import { SkiGame, type GameResult, type Hud } from '@/game/SkiGame';
 import type { Input } from '@/game/physics';
-import { bboxOf } from '@/lib/geo';
 import { DIFF_COLOR, DIFF_LABEL } from '@/lib/estimates';
 import { MEDAL_ICON, medalFor, type MedalTargets } from '@/lib/championship';
 import { ghostKey } from '@/game/ghost';
@@ -20,22 +19,11 @@ interface Props {
   onRun?: (r: GameResult) => void;
 }
 
-function nearby(piste: Piste, domain: DomainData) {
-  const [w, s, e, n] = bboxOf(piste.line);
-  const m = 0.04;
-  const inBox = (pts: [number, number][], mm = m) => pts.some(([x, y]) => x > w - mm && x < e + mm && y > s - mm && y < n + mm);
-  return {
-    pistes: domain.pistes.filter((p) => p.segments.some((seg) => inBox(seg))),
-    lifts: domain.lifts.filter((l) => inBox(l.line, 0.075)),
-    parks: domain.pois.filter((p) => p.kind === 'snowpark' && inBox([p.coord])).map((p) => p.coord),
-    restaurants: domain.pois.filter((p) => (p.kind === 'restaurant' || p.kind === 'bar') && inBox([p.coord])).map((p) => ({ name: p.name, coord: p.coord })),
-  };
-}
-
 export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const game = useRef<SkiGame | null>(null);
   const [loading, setLoading] = useState<string | null>('Initialisation…');
+  const [loadPct, setLoadPct] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [hud, setHud] = useState<Hud | null>(null);
   const [result, setResult] = useState<GameResult | null>(null);
@@ -56,14 +44,9 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
 
   useEffect(() => {
     if (!box.current) return;
-    const nb = nearby(piste, domain);
     const g = new SkiGame({
       container: box.current,
       piste,
-      nearbyPistes: nb.pistes,
-      nearbyLifts: nb.lifts,
-      parks: nb.parks,
-      restaurants: nb.restaurants,
       quality,
       onHud: (h) => {
         setHud(h);
@@ -101,7 +84,10 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
         setBest(personalBest(piste.id));
         setBoard(await leaderboard(piste.id));
       },
-      onLoading: setLoading,
+      onLoading: (msg, p) => {
+        setLoading(msg);
+        if (p != null) setLoadPct(p);
+      },
     });
     game.current = g;
     g.init()
@@ -392,11 +378,16 @@ export default function SkiSimulator({ piste, domain, onExit, targets, onRun }: 
       {(loading || error) && (
         <div className="absolute inset-0 grid place-items-center bg-anthracite-950/95">
           <div className="max-w-sm px-6 text-center">
-            <div className="mx-auto mb-5 h-12 w-12 animate-spin rounded-full border-2 border-white/10 border-t-electric-400" />
-            <div className="text-lg font-semibold">{piste.name}</div>
-            <div className="mt-1 text-sm text-glacier-200/70">{error ? `Erreur : ${error}` : loading}</div>
+            <div className="label">Pléney · Nyon · Les Gets</div>
+            <div className="mt-1 text-lg font-semibold">{piste.name}</div>
+            <div className="mx-auto mt-5 h-2 w-64 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full rounded-full bg-gradient-to-r from-electric-500 to-glacier-300 transition-[width] duration-300" style={{ width: `${Math.round(loadPct * 100)}%` }} />
+            </div>
+            <div className="mt-2 text-sm text-glacier-200/70">{error ? `Erreur : ${error}` : `${loading} ${loadPct > 0 && loadPct < 1 ? Math.round(loadPct * 100) + ' %' : ''}`}</div>
             <p className="mt-4 text-[11px] leading-relaxed text-glacier-200/40">
-              Parcours, remontées, bâtiments, routes et snowparks : OpenStreetMap · Relief : MNT réel. Forêt, jalons, panneaux, filets, modules freestyle et autres skieurs sont générés pour l'ambiance.
+              Toute la carte du secteur est chargée une fois (≈ 30 Mo) : relief IGN au pas de 5 m, chaque sapin placé d’après la photo aérienne IGN, pistes, remontées et chalets OpenStreetMap, ombres pré-calculées. Les descentes suivantes démarrent tout de suite.
+              <br />
+              Jalons, panneaux, filets, modules freestyle et autres skieurs sont générés pour l’ambiance.
             </p>
             {error && <button className="btn-ghost mt-4" onClick={onExit}>Retour à la carte</button>}
           </div>

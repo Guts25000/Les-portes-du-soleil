@@ -4,22 +4,13 @@
  * de pistes, enneigeurs.
  */
 import * as THREE from 'three';
+import { slot, slotPlane } from './atlas';
 import type { Difficulty } from '@/lib/types';
 import { DIFF_COLOR } from '@/lib/estimates';
 import type { LiftPath } from './lifts';
 
 type H = (x: number, z: number) => number;
 
-function tex(w: number, h: number, draw: (c: CanvasRenderingContext2D) => void) {
-  const cv = document.createElement('canvas');
-  cv.width = w;
-  cv.height = h;
-  draw(cv.getContext('2d')!);
-  const t = new THREE.CanvasTexture(cv);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 4;
-  return t;
-}
 
 const M = {
   steel: new THREE.MeshStandardMaterial({ color: 0x8e979f, metalness: 0.7, roughness: 0.35 }),
@@ -33,6 +24,9 @@ const M = {
   red: new THREE.MeshStandardMaterial({ color: 0xc81e1e, roughness: 0.6 }),
   white: new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.6 }),
   canvas: new THREE.MeshStandardMaterial({ color: 0xd9d4c7, roughness: 0.9 }),
+  cladding: new THREE.MeshStandardMaterial({ color: 0x6f7984, metalness: 0.5, roughness: 0.45 }),
+  shell: new THREE.MeshStandardMaterial({ color: 0xd9dee4, metalness: 0.5, roughness: 0.3 }),
+  stone: new THREE.MeshStandardMaterial({ color: 0x8b8680, roughness: 0.95 }),
 };
 
 function box(w: number, h: number, d: number, mat: THREE.Material, x = 0, y = 0, z = 0) {
@@ -64,20 +58,76 @@ export function liftStation(path: LiftPath, bottom: boolean, height: H, showBuil
     return g;
   }
   const big = path.kind === 'telecabine' || path.kind === 'telepherique' || path.kind === 'telemix';
+  const detach = !big && /express/i.test(path.name);
   const cableY = big ? 6.5 : 5.2;
   const back = bottom ? -1 : 1; // la gare s'étend au-delà du point d'embarquement / de débarquement
-  const L = big ? 16 : 11;
-  if (showBuilding) {
-    if (big) {
-      // dalle au ras de la neige devant la gare fermée
+  const L = big ? 18 : detach ? 16 : 11;
+  // enseigne au nom de la remontée sur la gare (repère visuel, comme sur place)
+  const nameSign = () => {
+    const sl = slot(512, 112, (c) => {
+      c.fillStyle = '#20262d';
+      c.fillRect(0, 0, 512, 112);
+      c.fillStyle = '#ffffff';
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      let sz = 70;
+      const t = path.name.toUpperCase();
+      do {
+        c.font = `800 ${sz}px Inter, system-ui, sans-serif`;
+        sz -= 4;
+      } while (c.measureText(t).width > 480 && sz > 20);
+      c.fillText(t, 256, 60);
+    });
+    return slotPlane(sl, big ? 7 : 5, big ? 1.5 : 1.1);
+  };
+  if (big) {
+    if (showBuilding) {
+      // gare fermée (bardage métallique gris, toit enneigé), ouverte côté câble
       g.add(box(12, 0.3, L, M.concrete, 0, -0.05, back * (L / 2 + 1)));
-      // gare fermée de télécabine, derrière la zone d'embarquement
-      g.add(box(11, 5.5, 9, M.woodDark, 0, 2.8, back * (L - 3)));
-      g.add(box(13, 0.5, L + 2, M.roof, 0, cableY + 1.2, back * (L / 2 + 1)));
-    } else {
-      for (const sx of [-3.8, 3.8]) for (const sz of [1, L]) g.add(box(0.3, cableY + 0.7, 0.3, M.steel, sx, (cableY + 0.7) / 2, back * sz));
-      g.add(box(9.5, 0.35, L + 1, M.roof, 0, cableY + 1.1, back * (L / 2 + 0.5)));
+      g.add(box(14, 8.5, 12, M.cladding, 0, 4.25, back * (L - 2)));
+      g.add(box(15, 0.6, 13, M.roof, 0, 8.8, back * (L - 2)));
+      g.add(box(10, 5.5, 0.2, M.dark, 0, 3.4, back * (L - 8.1)));
+      for (const sx of [-6.6, 6.6]) g.add(box(0.15, 1.1, L - 4, M.red, sx, 0.55, back * (L / 2 - 1)));
     }
+    // auvent au-dessus du quai (toujours : les gares OSM n'ont que leur emprise)
+    for (const sx of [-5.5, 5.5]) for (const sz of [2, 9]) g.add(box(0.35, cableY + 2, 0.35, M.steel, sx, (cableY + 2) / 2, back * sz));
+    g.add(box(13, 0.45, 11, M.cladding, 0, cableY + 2.2, back * 5.5));
+    g.add(box(13.4, 0.35, 11.4, M.roof, 0, cableY + 2.6, back * 5.5));
+    const sg = nameSign();
+    sg.position.set(0, cableY + 2.2, back * (5.5 - 5.6 * back * back) + (bottom ? 0 : 0));
+    sg.position.z = bottom ? 0.2 : -0.2;
+    sg.rotation.y = bottom ? 0 : Math.PI;
+    g.add(sg);
+  } else if (detach) {
+    // télésiège débrayable : carénage profilé au-dessus de la poulie, quai couvert
+    const shell = new THREE.Mesh(new THREE.CapsuleGeometry(3.6, L - 6, 6, 16), M.shell);
+    shell.rotation.x = Math.PI / 2;
+    shell.scale.set(1.35, 1, 0.42);
+    shell.position.set(0, cableY + 1.5, back * (L / 2 - 1));
+    shell.castShadow = true;
+    g.add(shell);
+    const under = new THREE.Mesh(new THREE.CapsuleGeometry(3.4, L - 6, 6, 16), M.dark);
+    under.rotation.x = Math.PI / 2;
+    under.scale.set(1.3, 1, 0.12);
+    under.position.set(0, cableY + 0.75, back * (L / 2 - 1));
+    g.add(under);
+    for (const sz of [3, L - 3]) g.add(box(0.9, cableY + 0.8, 1.2, M.cladding, 0, (cableY + 0.8) / 2, back * sz));
+    if (showBuilding) {
+      // garage des sièges (pierre et bois) à côté de la gare
+      g.add(box(9, 4.2, 14, M.stone, 10.5, 2.1, back * (L - 3)));
+      g.add(box(9.6, 0.5, 14.6, M.roof, 10.5, 4.6, back * (L - 3)));
+      g.add(box(9.1, 1.6, 14.1, M.wood, 10.5, 3.3, back * (L - 3)));
+    }
+    const sg = nameSign();
+    sg.position.set(0, cableY + 1.6, bottom ? 3.3 : -3.3);
+    sg.rotation.y = bottom ? 0 : Math.PI;
+    g.add(sg);
+  } else if (showBuilding) {
+    for (const sx of [-3.8, 3.8]) for (const sz of [1, L]) g.add(box(0.3, cableY + 0.7, 0.3, M.steel, sx, (cableY + 0.7) / 2, back * sz));
+    g.add(box(9.5, 0.35, L + 1, M.roof, 0, cableY + 1.1, back * (L / 2 + 0.5)));
+    // petite cabine du liftier
+    g.add(box(2.4, 2.5, 2.4, M.wood, 6, 1.25, back * 4));
+    g.add(box(3, 0.3, 3, M.roof, 6, 2.65, back * 4));
   }
   // poulie (bullwheel) au bout du câble : le repère visuel de toute gare de télésiège
   const wheel = new THREE.Mesh(new THREE.TorusGeometry(2.5, 0.16, 8, 32), M.dark);
@@ -132,7 +182,7 @@ export function restaurant(name: string, x: number, z: number, faceYaw: number, 
     g.add(t);
   }
   // enseigne
-  const sign = tex(512, 160, (c) => {
+  const sign = slot(512, 160, (c) => {
     c.fillStyle = '#5b3a22';
     c.fillRect(0, 0, 512, 160);
     c.strokeStyle = '#d9b07a';
@@ -148,7 +198,7 @@ export function restaurant(name: string, x: number, z: number, faceYaw: number, 
     } while (c.measureText(name).width > 470 && s > 20);
     c.fillText(name, 256, 84);
   });
-  const panel = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 1.3), new THREE.MeshStandardMaterial({ map: sign, roughness: 0.7, side: THREE.DoubleSide }));
+  const panel = slotPlane(sign, 4.2, 1.3);
   panel.position.set(0, 3.4, -4.6);
   g.add(panel);
   for (const sx of [-1.9, 1.9]) g.add(box(0.18, 4, 0.18, M.woodDark, sx, 2, -4.62));
@@ -166,7 +216,7 @@ export function directionPost(pistes: { name: string; d: Difficulty }[], x: numb
   pistes.slice(0, n).forEach((p, i) => {
     const bg = p.d === 'noire' ? '#111' : DIFF_COLOR[p.d];
     const right = i % 2 === 0;
-    const t = tex(512, 96, (c) => {
+    const t = slot(512, 96, (c) => {
       c.fillStyle = bg;
       c.beginPath();
       if (right) {
@@ -194,8 +244,7 @@ export function directionPost(pistes: { name: string; d: Difficulty }[], x: numb
       } while (c.measureText(p.name.toUpperCase()).width > 400 && s > 18);
       c.fillText(p.name.toUpperCase(), 256, 50);
     });
-    t.colorSpace = THREE.SRGBColorSpace;
-    const blade = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 0.36), new THREE.MeshStandardMaterial({ map: t, transparent: true, roughness: 0.6, side: THREE.DoubleSide }));
+    const blade = slotPlane(t, 1.9, 0.36);
     blade.position.set(right ? 0.9 : -0.9, poleH - 0.25 - i * 0.42, 0.08);
     g.add(blade);
   });
@@ -223,7 +272,7 @@ export function snowGuns(spots: { x: number; y: number; z: number; yaw: number }
   for (const [geo, mat] of parts) {
     const im = new THREE.InstancedMesh(geo, mat, spots.length);
     spots.forEach((s, i) => im.setMatrixAt(i, m.compose(p.set(s.x, s.y, s.z), q.setFromAxisAngle(up, s.yaw), one)));
-    im.castShadow = true;
+    im.castShadow = false;
     im.computeBoundingSphere();
     g.add(im);
   }

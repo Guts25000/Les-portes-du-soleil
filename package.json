@@ -8,7 +8,9 @@
     "start": "npx serve out",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test:libs": "tsx scripts/test-libs.ts && tsx scripts/test-physics.ts && tsx scripts/test-sector.ts && tsx scripts/test-buildings.ts && tsx scripts/test-lifts.ts && tsx scripts/test-tricks.ts && tsx scripts/test-features.ts && tsx scripts/test-ghost.ts"
+    "bake": "tsx scripts/bake/fetch.mts && tsx scripts/bake/osm.mts && tsx scripts/bake/data.mts && tsx scripts/bake/render.mts",
+    "check:world": "tsx scripts/check/pistes-trees.mts",
+    "test:libs": "tsx scripts/test-libs.ts && tsx scripts/test-physics.ts && tsx scripts/test-sector.ts && tsx scripts/test-buildings.ts && tsx scripts/test-lifts.ts && tsx scripts/test-tricks.ts && tsx scripts/test-features.ts && tsx scripts/test-ghost.ts && tsx scripts/test-runline.ts"
   },
   "dependencies": {
     "maplibre-gl": "^4.7.1",

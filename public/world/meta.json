@@ -1,0 +1,92 @@
+{
+ "version": 1,
+ "generated": "2026-11-13",
+ "center": [
+  6.679,
+  46.158
+ ],
+ "bbox": [
+  6.612525249681797,
+  46.11771044770514,
+  6.745474750318204,
+  46.19828955229486
+ ],
+ "cell": 5,
+ "nx": 2048,
+ "nz": 1792,
+ "halfW": 5120,
+ "halfD": 4480,
+ "hmin": 799.638427734375,
+ "far": {
+  "halfX": 27000,
+  "halfZ": 26000,
+  "cell": 100,
+  "nx": 541,
+  "nz": 521,
+  "hmin": 368.8111572265625
+ },
+ "sun": {
+  "x": 0.27314943161134375,
+  "y": 0.6018150231520483,
+  "z": 0.7504718954890313
+ },
+ "texM": 2.5,
+ "tiles": [
+  {
+   "i": 0,
+   "j": 0,
+   "w": 2048,
+   "h": 2048
+  },
+  {
+   "i": 1,
+   "j": 0,
+   "w": 2048,
+   "h": 2048
+  },
+  {
+   "i": 0,
+   "j": 1,
+   "w": 2048,
+   "h": 1536
+  },
+  {
+   "i": 1,
+   "j": 1,
+   "w": 2048,
+   "h": 1536
+  }
+ ],
+ "tileSize": 2048,
+ "trees": {
+  "count": 1102467,
+  "chunk": 320,
+  "cols": 32,
+  "rows": 28,
+  "step": 1.25
+ },
+ "sources": {
+  "relief": "IGN RGE ALTI® (Licence Ouverte Etalab 2.0) + AWS Terrain Tiles au loin",
+  "arbres": "Orthophotographie IGN BD ORTHO® (Licence Ouverte Etalab 2.0) : chaque sapin est placé là où la photo aérienne montre un résineux",
+  "carto": "© OpenStreetMap contributors (ODbL)"
+ },
+ "files": {
+  "albedo_0_0.jpg": 782898,
+  "albedo_0_1.jpg": 656704,
+  "albedo_1_0.jpg": 878193,
+  "albedo_1_1.jpg": 525796,
+  "aux.jpg": 2410749,
+  "dir.jpg": 645125,
+  "far.dat": 488199,
+  "far_albedo.jpg": 1236988,
+  "far_light.jpg": 2009455,
+  "height.dat": 2560472,
+  "light_0_0.jpg": 2208608,
+  "light_0_1.jpg": 1691822,
+  "light_1_0.jpg": 2362405,
+  "light_1_1.jpg": 1665402,
+  "mask.dat": 99164,
+  "osm.dat": 507601,
+  "trees.dat": 3920920
+ }
+}
